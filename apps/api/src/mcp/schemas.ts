@@ -232,6 +232,30 @@ export const skillsGenerateTextSchema: McpToolInputSchema = {
   additionalProperties: false,
 }
 
+export const skillsGenerateRecordingSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    recordingUrl: { type: 'string', description: 'URL of screen recording video (MP4, WebM)' },
+    target: { type: 'string', enum: ['cursor', 'claude', 'opencode', 'codra'], description: 'Target AI agent platform' },
+    focus: { type: 'array', items: { type: 'string' }, description: 'Focus areas for the skill' },
+    frameDescriptions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          timestamp: { type: 'number' },
+          description: { type: 'string' },
+          actions: { type: 'array', items: { type: 'string' } },
+          uiElements: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      description: 'Optional pre-analyzed frame descriptions',
+    },
+  },
+  required: ['recordingUrl'],
+  additionalProperties: false,
+}
+
 export const skillsExportCursorSchema: McpToolInputSchema = {
   type: 'object',
   properties: {
@@ -1584,5 +1608,93 @@ export const tradiaExportJsonSchema: McpToolInputSchema = {
     format: { type: 'string', enum: ['pretty', 'compact'], description: 'JSON output format' },
   },
   required: ['data'],
+  additionalProperties: false,
+}
+
+export const codraReviewSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    code: { type: 'string', description: 'Code to review' },
+    language: { type: 'string', enum: ['cpp', 'javascript', 'typescript', 'python', 'java', 'go', 'rust'], description: 'Programming language' },
+    rules: { type: 'array', items: { type: 'string', enum: ['no-raw-loops', 'off-by-one', 'modernize', 'memory-safety'] }, description: 'Rules to check' },
+  },
+  required: ['code'],
+  additionalProperties: false,
+}
+
+export const doculaneExtractSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    documentUrl: { type: 'string', description: 'URL of the document to extract from (PDF, image, scan)' },
+    prompt: { type: 'string', description: 'Natural language description of what to extract' },
+    format: { type: 'string', enum: ['json', 'text', 'markdown'], description: 'Output format' },
+    schema: { type: 'object', description: 'Optional schema defining expected fields and types' },
+  },
+  required: ['documentUrl', 'prompt'],
+  additionalProperties: false,
+}
+
+export const calclaneHealthSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const calclanePricingSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const calclaneCapabilitiesSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const calclaneEvaluateSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    expression: {
+      type: 'string',
+      description: 'Math expression to evaluate, e.g. "2 + 3 * 4" or "sin(90)"',
+    },
+    mode: {
+      type: 'string',
+      enum: ['standard', 'scientific'],
+      description: 'standard = left-to-right; scientific = operator precedence (default)',
+    },
+    angle: {
+      type: 'string',
+      enum: ['deg', 'rad', 'grad'],
+      description: 'Angle unit for trig functions (default deg)',
+    },
+    fe: {
+      type: 'boolean',
+      description: 'Force scientific notation display',
+    },
+  },
+  required: ['expression'],
+  additionalProperties: false,
+}
+
+export const calclaneDispatchSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    commands: {
+      type: 'array',
+      description: 'Calculator engine commands (digit, binary, unary, equals, clear, const, ...)',
+      items: { type: 'object' },
+    },
+    mode: {
+      type: 'string',
+      enum: ['standard', 'scientific'],
+    },
+    angle: {
+      type: 'string',
+      enum: ['deg', 'rad', 'grad'],
+    },
+  },
+  required: ['commands'],
   additionalProperties: false,
 }

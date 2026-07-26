@@ -357,12 +357,13 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
       const { generateFromProfile } = await import('./services/skills.js')
       sendData(res, 200, {
         status: 'ok',
-        version: '0.1.0',
+        version: '0.2.0',
         endpoints: [
           'POST /v1/skills/generate/github-profile',
           'POST /v1/skills/generate/github-repo',
           'POST /v1/skills/generate/docs',
           'POST /v1/skills/generate/text',
+          'POST /v1/skills/generate/recording',
           'POST /v1/skills/export/cursor',
           'POST /v1/skills/export/claude',
           'GET /v1/skills/health',
@@ -373,6 +374,35 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
 
     if (req.method === 'POST') {
       const body = await parseBody(req)
+
+      if (path === '/v1/skills/generate/recording') {
+        const recordingUrl = typeof body.recordingUrl === 'string' ? body.recordingUrl.trim() : ''
+        if (!recordingUrl) throw new HttpError(422, 'VALIDATION_ERROR', 'recordingUrl is required.')
+        const target = typeof body.target === 'string' ? body.target : 'cursor'
+
+        const chargeResult = await chargeCredits({
+          projectId: apiKey.project_id,
+          apiKeyId: apiKey.id,
+          product: 'skills',
+          action: 'generate.recording',
+          requestId: undefined,
+          metadata: { recordingUrl, target },
+        })
+        if (!chargeResult.success) {
+          sendData(res, 402, { ok: false, error: 'insufficient_credits', required: chargeResult.event.credits, available: chargeResult.remainingCredits })
+          return
+        }
+
+        const { generateFromRecording } = await import('./services/skills.js')
+        const result = await generateFromRecording({
+          recordingUrl,
+          target,
+          focus: Array.isArray(body.focus) ? body.focus.filter((f: unknown) => typeof f === 'string') : undefined,
+          frameDescriptions: Array.isArray(body.frameDescriptions) ? body.frameDescriptions : undefined,
+        })
+        sendData(res, 200, { ...result, usage: { credits: chargeResult.event.credits, action: 'skills.generate.recording' } })
+        return
+      }
 
       if (path === '/v1/skills/generate/github-profile') {
         const username = typeof body.username === 'string' ? body.username.trim() : ''
@@ -1448,6 +1478,147 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     }
 
     throw new HttpError(404, 'NOT_FOUND', 'SearchLane API route not found.', { method: req.method, path })
+  }
+
+  // ─── CalcLane Calculator API (API-key authenticated) ─────────────────────
+
+  if (path.startsWith('/v1/calclane/')) {
+    let rawKey: string
+    const authHeader = req.headers['authorization'] || ''
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      rawKey = authHeader.slice(7)
+    } else if (typeof req.headers['x-api-key'] === 'string') {
+      rawKey = req.headers['x-api-key'] as string
+    } else {
+      throw new HttpError(401, 'MISSING_API_KEY', 'Missing Talocode API key. Provide via Authorization: Bearer header or X-Api-Key header.')
+    }
+
+    const apiKey = await authenticateTalocodeApiKey(rawKey)
+    const {
+      evaluateExpression,
+      runDispatch,
+      getCalcLanePricing,
+      getCalcLaneCapabilities,
+      CALCLANE_VERSION,
+    } = await import('./services/calclane.js')
+
+    if (req.method === 'GET' && path === '/v1/calclane/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'calclane',
+        version: CALCLANE_VERSION,
+        endpoints: getCalcLaneCapabilities().endpoints,
+      })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/calclane/pricing') {
+      sendData(res, 200, getCalcLanePricing())
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/calclane/capabilities') {
+      sendData(res, 200, getCalcLaneCapabilities())
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/calclane/evaluate') {
+      const body = await parseBody(req)
+      const expression =
+        typeof body.expression === 'string'
+          ? body.expression
+          : typeof body.expr === 'string'
+            ? body.expr
+            : typeof body.q === 'string'
+              ? body.q
+              : ''
+      if (!String(expression).trim()) {
+        throw new HttpError(422, 'VALIDATION_ERROR', 'expression is required.')
+      }
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'calclane',
+        action: 'calclane.evaluate',
+        requestId: undefined,
+        metadata: { expression: String(expression).slice(0, 200) },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = evaluateExpression(String(expression), {
+        mode: body.mode === 'standard' ? 'standard' : 'scientific',
+        angle: body.angle === 'rad' || body.angle === 'grad' ? body.angle : 'deg',
+        fe: Boolean(body.fe),
+      })
+      if (!result.ok) {
+        sendData(res, 422, {
+          ...result,
+          usage: {
+            credits: chargeResult.event.credits,
+            action: 'calclane.evaluate',
+            remaining: chargeResult.remainingCredits,
+          },
+        })
+        return
+      }
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'calclane.evaluate',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/calclane/dispatch') {
+      const body = await parseBody(req)
+      const commands = Array.isArray(body.commands) ? body.commands : null
+      if (!commands) {
+        throw new HttpError(422, 'VALIDATION_ERROR', 'commands array is required.')
+      }
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'calclane',
+        action: 'calclane.dispatch',
+        requestId: undefined,
+        metadata: { commandCount: commands.length },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = runDispatch({
+        commands: commands as Array<Record<string, unknown>>,
+        mode: body.mode === 'standard' ? 'standard' : 'scientific',
+        angle: body.angle === 'rad' || body.angle === 'grad' ? body.angle : 'deg',
+      })
+      sendData(res, result.ok ? 200 : 422, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'calclane.dispatch',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    throw new HttpError(404, 'NOT_FOUND', 'CalcLane API route not found.', { method: req.method, path })
   }
 
   // ─── ClipLoop API (API-key authenticated) ────────────────────────────────
@@ -2733,9 +2904,206 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
         }
         return
       }
+
+      if (path === '/v1/doculane/extract') {
+        const documentUrl = typeof body.documentUrl === 'string' ? body.documentUrl.trim() : ''
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+        if (!documentUrl || !prompt) throw new HttpError(422, 'VALIDATION_ERROR', 'documentUrl and prompt are required.')
+        const format = typeof body.format === 'string' ? body.format : 'json'
+        const schema = typeof body.schema === 'object' ? body.schema : undefined
+
+        const chargeResult = await chargeCredits({
+          projectId: apiKey.project_id,
+          apiKeyId: apiKey.id,
+          product: 'doculane',
+          action: 'doculane.extract',
+          credits: 30,
+          requestId: undefined,
+          metadata: { documentUrl, prompt: prompt.slice(0, 200), format },
+        })
+        if (!chargeResult.success) {
+          sendData(res, 402, { ok: false, error: 'insufficient_credits', required: chargeResult.event.credits, available: chargeResult.remainingCredits })
+          return
+        }
+
+        try {
+          const { extractFromDocument } = await import('./services/doculane.js')
+          const result = await extractFromDocument({ documentUrl, prompt, format, schema })
+          sendData(res, 200, { ...result, usage: { credits: chargeResult.event.credits, action: 'doculane.extract' } })
+        } catch (error) {
+          throw new HttpError(422, 'DOCULANE_ERROR', error instanceof Error ? error.message : 'Failed to extract from document.')
+        }
+        return
+      }
     }
 
     throw new HttpError(404, 'NOT_FOUND', 'DocuLane API route not found.', { method: req.method, path })
+  }
+
+  if (path.startsWith('/v1/wiki/')) {
+    if (req.method === 'GET' && path === '/v1/wiki/health') {
+      sendJson(res, 200, { status: 'ok', product: 'wiki', version: '0.1.0' })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/wiki/pricing') {
+      sendJson(res, 200, {
+        product: 'wiki',
+        credits: {
+          init: 0,
+          ingest: 5,
+          query: 3,
+          lint: 2,
+          save: 2,
+        },
+        note: '1 credit = $0.01 USD',
+      })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/wiki/capabilities') {
+      sendJson(res, 200, {
+        product: 'wiki',
+        actions: ['init', 'ingest', 'query', 'lint', 'save'],
+        features: [
+          'Knowledge base initialization',
+          'Content ingestion (files, text)',
+          'Natural language querying',
+          'Cross-referencing and linking',
+          'Wiki health linting',
+          'Hot cache for recent context',
+        ],
+      })
+      return
+    }
+
+    const apiKey = await authenticateApiKey(req)
+    if (!apiKey) {
+      throw new HttpError(401, 'UNAUTHORIZED', 'Valid API key required.')
+    }
+
+    const customer = await getCustomer(apiKey.customerId)
+    if (!customer) {
+      throw new HttpError(401, 'UNAUTHORIZED', 'Customer not found.')
+    }
+
+    if (req.method === 'POST' && path === '/v1/wiki/init') {
+      const chargeResult = await recordLocalUsageEvent(customer.id, 'wiki.init', 0)
+      if (!chargeResult) {
+        throw new HttpError(402, 'INSUFFICIENT_CREDITS', 'Not enough credits.')
+      }
+      sendJson(res, 200, { status: 'ok', message: 'Wiki structure initialized.', usage: { credits: 0, action: 'wiki.init' } })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/wiki/ingest') {
+      const body = await parseBody(req)
+      if (!body.source && !body.content) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'source or content required.')
+      }
+      const chargeResult = await recordLocalUsageEvent(customer.id, 'wiki.ingest', 5)
+      if (!chargeResult) {
+        throw new HttpError(402, 'INSUFFICIENT_CREDITS', 'Not enough credits.')
+      }
+      const result = { source: body.source || 'inline', pagesCreated: 1, linksCreated: 0, pages: ['extracted'] }
+      sendData(res, 200, { ...result, usage: { credits: 5, action: 'wiki.ingest' } })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/wiki/query') {
+      const body = await parseBody(req)
+      if (!body.question) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'question required.')
+      }
+      const chargeResult = await recordLocalUsageEvent(customer.id, 'wiki.query', 3)
+      if (!chargeResult) {
+        throw new HttpError(402, 'INSUFFICIENT_CREDITS', 'Not enough credits.')
+      }
+      const result = { answer: 'Query processed. Connect local wiki for full results.', sources: [] }
+      sendData(res, 200, { ...result, usage: { credits: 3, action: 'wiki.query' } })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/wiki/lint') {
+      const chargeResult = await recordLocalUsageEvent(customer.id, 'wiki.lint', 2)
+      if (!chargeResult) {
+        throw new HttpError(402, 'INSUFFICIENT_CREDITS', 'Not enough credits.')
+      }
+      const result = { orphans: [], deadLinks: [], contradictions: [], staleClaims: [], stats: { pages: 0, links: 0, orphans: 0, deadLinks: 0, contradictions: 0 } }
+      sendData(res, 200, { ...result, usage: { credits: 2, action: 'wiki.lint' } })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/wiki/save') {
+      const body = await parseBody(req)
+      if (!body.title || !body.content) {
+        throw new HttpError(400, 'VALIDATION_ERROR', 'title and content required.')
+      }
+      const chargeResult = await recordLocalUsageEvent(customer.id, 'wiki.save', 2)
+      if (!chargeResult) {
+        throw new HttpError(402, 'INSUFFICIENT_CREDITS', 'Not enough credits.')
+      }
+      const result = { path: `conversation-${new Date().toISOString().split('T')[0]}` }
+      sendData(res, 200, { ...result, usage: { credits: 2, action: 'wiki.save' } })
+      return
+    }
+  }
+
+  // ─── Codra API (API-key authenticated) ─────────────────────────────────────
+
+  if (path.startsWith('/v1/codra/')) {
+    let rawKey: string
+    const authHeader = req.headers['authorization'] || ''
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      rawKey = authHeader.slice(7)
+    } else if (typeof req.headers['x-api-key'] === 'string') {
+      rawKey = req.headers['x-api-key'] as string
+    } else {
+      throw new HttpError(401, 'MISSING_API_KEY', 'Missing Talocode API key. Provide via Authorization: Bearer header or X-Api-Key header.')
+    }
+
+    const apiKey = await authenticateTalocodeApiKey(rawKey)
+
+    if (req.method === 'GET' && path === '/v1/codra/health') {
+      sendData(res, 200, {
+        status: 'ok',
+        version: '0.1.0',
+        endpoints: [
+          'POST /v1/codra/review',
+          'GET /v1/codra/health',
+        ],
+      })
+      return
+    }
+
+    if (req.method === 'POST') {
+      const body = await parseBody(req)
+
+      if (path === '/v1/codra/review') {
+        const code = typeof body.code === 'string' ? body.code.trim() : ''
+        if (!code) throw new HttpError(422, 'VALIDATION_ERROR', 'code is required.')
+        const language = typeof body.language === 'string' ? body.language : 'javascript'
+        const rules = Array.isArray(body.rules) ? body.rules.filter((r: unknown) => typeof r === 'string') : undefined
+
+        const chargeResult = await chargeCredits({
+          projectId: apiKey.project_id,
+          apiKeyId: apiKey.id,
+          product: 'codra',
+          action: 'codra.review',
+          requestId: undefined,
+          metadata: { language, codeLength: code.length },
+        })
+        if (!chargeResult.success) {
+          sendData(res, 402, { ok: false, error: 'insufficient_credits', required: chargeResult.event.credits, available: chargeResult.remainingCredits })
+          return
+        }
+
+        const { reviewCode } = await import('./services/codra.js')
+        const result = reviewCode({ code, language, rules })
+        sendData(res, 200, { ...result, usage: { credits: chargeResult.event.credits, action: 'codra.review' } })
+        return
+      }
+    }
   }
 
   throw new HttpError(404, 'NOT_FOUND', 'Route not found.', { method: req.method, path })

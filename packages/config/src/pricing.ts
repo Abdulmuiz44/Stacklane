@@ -73,7 +73,8 @@ export const TALOCODE_CLOUD_PRICING = {
       "repo.summary": 50,
       "explain": 20,
       "review": 40,
-      "plan": 40
+      "plan": 40,
+      "codra.review": 20
     },
     worklane: {
       "workflow.small": 15,
@@ -94,6 +95,7 @@ export const TALOCODE_CLOUD_PRICING = {
       "generate.github_repo": 100,
       "generate.docs": 100,
       "generate.text": 40,
+      "generate.recording": 60,
       "export.cursor": 10,
       "export.claude": 10
     },
@@ -169,6 +171,24 @@ export const TALOCODE_CLOUD_PRICING = {
       "flowlane.export.claude": 10,
       "flowlane.export.cursor": 10,
       "flowlane.export.codra": 10
+    },
+    maillane: {
+      "maillane.send.text": 2,
+      "maillane.send.html": 3,
+      "maillane.send.attachment": 5,
+      "maillane.account.connect": 0,
+      "maillane.account.list": 0,
+      "maillane.stats.get": 0
+    },
+    doculane: {
+      "doculane.read": 5,
+      "doculane.write": 5,
+      "doculane.info": 2,
+      "doculane.extract": 30
+    },
+    calclane: {
+      "calclane.evaluate": 1,
+      "calclane.dispatch": 1
     }
   }
 } as const
