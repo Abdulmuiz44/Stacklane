@@ -7,6 +7,7 @@ import { InvoiceLaneClient } from './invoicelane'
 import { GeoLaneClient } from './geolane'
 import { SearchLaneClient } from './searchlane'
 import { CalcLaneClient } from './calclane'
+import { ReliabilityLaneClient } from './reliabilitylane'
 import { WebDataLaneClient } from './webdatalane'
 import { SignalLaneClient } from './signallane'
 import { UGCLaneClient } from './ugclane'
@@ -40,6 +41,7 @@ export class TalocodeApiClient {
   public geolane: GeoLaneClient
   public searchlane: SearchLaneClient
   public calclane: CalcLaneClient
+  public reliabilitylane: ReliabilityLaneClient
   public webdatalane: WebDataLaneClient
   public ugclane: UGCLaneClient
   public crawlerlane: CrawlerLaneClient
@@ -72,6 +74,7 @@ export class TalocodeApiClient {
     this.geolane = new GeoLaneClient(this)
     this.searchlane = new SearchLaneClient(this)
     this.calclane = new CalcLaneClient(this)
+    this.reliabilitylane = new ReliabilityLaneClient(this)
     this.webdatalane = new WebDataLaneClient(this)
     this.ugclane = new UGCLaneClient(this)
     this.crawlerlane = new CrawlerLaneClient(this)

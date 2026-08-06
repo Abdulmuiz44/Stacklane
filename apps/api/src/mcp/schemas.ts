@@ -1698,3 +1698,103 @@ export const calclaneDispatchSchema: McpToolInputSchema = {
   required: ['commands'],
   additionalProperties: false,
 }
+
+export const reliabilitylaneHealthSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylanePricingSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylaneCapabilitiesSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylanePatternsSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylaneRetriesSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylaneChecklistsSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylanePlaybooksSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylaneAntipatternsSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {},
+  additionalProperties: false,
+}
+
+export const reliabilitylaneMatchSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    symptom: { type: 'string', description: 'What the agent is doing wrong, e.g. "keeps retrying the same call"' },
+    error: { type: 'string', description: 'Error string, e.g. "ECONNRESET"' },
+    category: {
+      type: 'string',
+      enum: ['retries', 'verification', 'context', 'safety', 'incidents', 'math', 'security', 'coordination'],
+      description: 'Filter by category',
+    },
+  },
+  additionalProperties: false,
+}
+
+export const reliabilitylaneRetryPlanSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'number', description: 'HTTP status code, e.g. 429 or 500' },
+    code: { type: 'string', description: 'Error code' },
+    message: { type: 'string', description: 'Error message' },
+    kind: {
+      type: 'string',
+      enum: ['transient', 'rate_limit', 'timeout', 'auth', 'validation', 'not_found', 'permanent', 'unknown'],
+      description: 'Force error classification',
+    },
+  },
+  additionalProperties: false,
+}
+
+export const reliabilitylaneVerifySchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    checklist: { type: 'string', description: 'Checklist id, e.g. "deploy-verified"' },
+    area: {
+      type: 'string',
+      enum: ['deployment', 'code', 'security', 'content', 'data'],
+      description: 'Checklist area',
+    },
+    evidence: { type: 'object', description: 'Evidence keys already satisfied, e.g. {"Lint passes": true}' },
+  },
+  additionalProperties: false,
+}
+
+export const reliabilitylaneIncidentSchema: McpToolInputSchema = {
+  type: 'object',
+  properties: {
+    symptom: { type: 'string', description: 'Incident symptom, e.g. "deploy failed"' },
+    error: { type: 'string', description: 'Error string' },
+  },
+  additionalProperties: false,
+}

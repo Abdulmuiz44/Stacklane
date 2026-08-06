@@ -115,7 +115,8 @@ import {
   listCloudUsageEvents,
   getCloudUsageSummary,
   listCloudTopups,
-  createCloudTopup
+  createCloudTopup,
+  findTopupById
 } from './repositories/cloud-usage-repo'
 import {
   toCloudProjectResponse,
@@ -134,8 +135,11 @@ import {
   createTopupIntent,
   confirmTopup,
   confirmStripeTopup,
+  confirmLemonSqueezyTopup,
+  parseLemonSqueezyWebhook,
   TALOCODE_CLOUD_PRICING,
-  listAllPricing
+  listAllPricing,
+  ensureWallet,
 } from './services/cloud-billing'
 import {
   constructStripeWebhookEvent
@@ -210,6 +214,15 @@ async function enforceOrganizationPermission(organizationId: string, userId: str
   const role = await findUserRoleForOrganization(organizationId, userId)
   requirePermission(role, action)
   return role
+}
+
+async function requireCloudProjectOwner(projectId: string, userId: string) {
+  const project = await findCloudProjectById(projectId)
+  if (!project) throw new HttpError(404, 'NOT_FOUND', 'Cloud project not found.')
+  if (project.owner_id !== userId) {
+    throw new HttpError(403, 'FORBIDDEN', 'You do not have access to this Cloud project.')
+  }
+  return project
 }
 
 async function handler(req: IncomingMessage, res: ServerResponse) {
@@ -809,6 +822,67 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     }
 
     throw new HttpError(404, 'NOT_FOUND', 'Agent Browser API route not found.', { method: req.method, path })
+  }
+
+  // ─── ScreenLane Image Analysis API (API-key authenticated) ───────────────
+
+  if (path.startsWith('/v1/screenlane/')) {
+    const authHeader = req.headers.authorization
+    const rawKey = typeof authHeader === 'string' && authHeader.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : typeof req.headers['x-api-key'] === 'string'
+        ? req.headers['x-api-key']
+        : undefined
+    if (!rawKey) {
+      throw new HttpError(401, 'MISSING_API_KEY', 'Missing Talocode API key. Provide via Authorization: Bearer header or X-Api-Key header.')
+    }
+    await authenticateTalocodeApiKey(rawKey)
+
+    if (req.method === 'GET' && path === '/v1/screenlane/health') {
+      sendData(res, 200, {
+        status: 'ok',
+        providerConfigured: Boolean(process.env.SCREENLANE_VISION_PROVIDER_URL),
+        endpoints: ['POST /v1/screenlane/analyze', 'GET /v1/screenlane/health'],
+      })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/screenlane/analyze') {
+      const { MAX_SCREENLANE_REQUEST_BYTES } = await import('./services/screenlane.js')
+      const body = await parseBody(req, MAX_SCREENLANE_REQUEST_BYTES)
+      const features = Array.isArray(body.features) ? body.features : undefined
+      if (features?.some((feature) => feature !== 'text' && feature !== 'labels')) {
+        throw new HttpError(422, 'VALIDATION_ERROR', 'features may only include text and labels.')
+      }
+      const {
+        analyzeScreenImage,
+        ScreenLaneInputError,
+        VisionProviderTimeoutError,
+        VisionProviderUnavailableError,
+      } = await import('./services/screenlane.js')
+      try {
+        const result = await analyzeScreenImage({
+          imageBase64: typeof body.imageBase64 === 'string' ? body.imageBase64 : '',
+          mimeType: typeof body.mimeType === 'string' ? body.mimeType : '',
+          features: features as ('text' | 'labels')[] | undefined,
+        })
+        sendData(res, 200, result)
+      } catch (error) {
+        if (error instanceof VisionProviderUnavailableError) {
+          throw new HttpError(503, 'VISION_UNAVAILABLE', error.message)
+        }
+        if (error instanceof ScreenLaneInputError) {
+          throw new HttpError(422, 'VALIDATION_ERROR', error.message)
+        }
+        if (error instanceof VisionProviderTimeoutError) {
+          throw new HttpError(504, 'VISION_PROVIDER_TIMEOUT', 'Image analysis provider timed out.')
+        }
+        throw new HttpError(502, 'VISION_PROVIDER_ERROR', 'Image analysis provider failed.')
+      }
+      return
+    }
+
+    throw new HttpError(404, 'NOT_FOUND', 'ScreenLane API route not found.', { method: req.method, path })
   }
 
   // ─── InvoiceLane Document API (API-key authenticated) ────────────────────
@@ -1621,6 +1695,233 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     throw new HttpError(404, 'NOT_FOUND', 'CalcLane API route not found.', { method: req.method, path })
   }
 
+  // ─── ReliabilityLane Reliability API (API-key authenticated) ────────────────────
+
+  if (path.startsWith('/v1/reliabilitylane/')) {
+    let rawKey: string
+    const authHeader = req.headers['authorization'] || ''
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      rawKey = authHeader.slice(7)
+    } else if (typeof req.headers['x-api-key'] === 'string') {
+      rawKey = req.headers['x-api-key'] as string
+    } else {
+      throw new HttpError(401, 'MISSING_API_KEY', 'Missing Talocode API key. Provide via Authorization: Bearer header or X-Api-Key header.')
+    }
+
+    const apiKey = await authenticateTalocodeApiKey(rawKey)
+    const {
+      FAILURE_PATTERNS,
+      RETRY_STRATEGIES,
+      VERIFICATION_CHECKLISTS,
+      INCIDENT_PLAYBOOKS,
+      ANTI_PATTERNS,
+      matchFailure,
+      planRetry,
+      verify,
+      incidentFor,
+      getReliabilityLanePricing,
+      getReliabilityLaneCapabilities,
+      RELIABILITYLANE_VERSION,
+    } = await import('./services/reliabilitylane.js')
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'reliabilitylane',
+        version: RELIABILITYLANE_VERSION,
+        endpoints: getReliabilityLaneCapabilities().endpoints,
+      })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/pricing') {
+      sendData(res, 200, getReliabilityLanePricing())
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/capabilities') {
+      sendData(res, 200, getReliabilityLaneCapabilities())
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/antipatterns') {
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, antiPatterns: ANTI_PATTERNS })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/patterns') {
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, patterns: FAILURE_PATTERNS })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/retries') {
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, strategies: RETRY_STRATEGIES })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/checklists') {
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, checklists: VERIFICATION_CHECKLISTS })
+      return
+    }
+
+    if (req.method === 'GET' && path === '/v1/reliabilitylane/playbooks') {
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, playbooks: INCIDENT_PLAYBOOKS })
+      return
+    }
+
+    const patternMatch = path.match(/^\/v1\/reliabilitylane\/patterns\/([\w-]+)$/)
+    if (req.method === 'GET' && patternMatch) {
+      const pattern = FAILURE_PATTERNS.find((p) => p.id === patternMatch[1])
+      if (!pattern) {
+        throw new HttpError(404, 'NOT_FOUND', `ReliabilityLane pattern '${patternMatch[1]}' not found.`)
+      }
+      sendData(res, 200, { product: 'reliabilitylane', version: RELIABILITYLANE_VERSION, pattern })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/reliabilitylane/match') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'reliabilitylane',
+        action: 'reliabilitylane.patterns',
+        requestId: undefined,
+        metadata: { symptom: String(body.symptom || '').slice(0, 200) },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = matchFailure({
+        symptom: typeof body.symptom === 'string' ? body.symptom : '',
+        error: typeof body.error === 'string' ? body.error : '',
+        category: typeof body.category === 'string' ? body.category : undefined,
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'reliabilitylane.patterns',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/reliabilitylane/retry-plan') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'reliabilitylane',
+        action: 'reliabilitylane.retry',
+        requestId: undefined,
+        metadata: { status: typeof body.status === 'number' ? body.status : undefined },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = planRetry({
+        status: typeof body.status === 'number' ? body.status : undefined,
+        code: typeof body.code === 'string' ? body.code : undefined,
+        message: typeof body.message === 'string' ? body.message : undefined,
+        kind: typeof body.kind === 'string' ? body.kind : undefined,
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'reliabilitylane.retry',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/reliabilitylane/verify') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'reliabilitylane',
+        action: 'reliabilitylane.verify',
+        requestId: undefined,
+        metadata: { area: typeof body.area === 'string' ? body.area : undefined },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = verify({
+        checklist: typeof body.checklist === 'string' ? body.checklist : undefined,
+        area: typeof body.area === 'string' ? body.area : undefined,
+        evidence: body.evidence && typeof body.evidence === 'object' ? (body.evidence as Record<string, unknown>) : undefined,
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'reliabilitylane.verify',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    if (req.method === 'POST' && path === '/v1/reliabilitylane/incident') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'reliabilitylane',
+        action: 'reliabilitylane.incident',
+        requestId: undefined,
+        metadata: { symptom: String(body.symptom || '').slice(0, 200) },
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = incidentFor({
+        symptom: typeof body.symptom === 'string' ? body.symptom : '',
+        error: typeof body.error === 'string' ? body.error : '',
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'reliabilitylane.incident',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+
+    throw new HttpError(404, 'NOT_FOUND', 'ReliabilityLane API route not found.', { method: req.method, path })
+  }
+
   // ─── ClipLoop API (API-key authenticated) ────────────────────────────────
 
   if (path.startsWith('/v1/cliploop/')) {
@@ -1826,7 +2127,35 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     throw new HttpError(404, 'NOT_FOUND', 'ClipLoop API route not found.', { method: req.method, path })
   }
 
-  // ─── Stripe Webhook (no session auth) ──────────────────────────────────
+  // ─── Payment webhooks (no session auth) ────────────────────────────────
+
+  if (req.method === 'POST' && path === '/api/v1/cloud/billing/lemonsqueezy/webhook') {
+    const rawBody = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      req.on('error', reject)
+    })
+    const signature =
+      typeof req.headers['x-signature'] === 'string'
+        ? req.headers['x-signature']
+        : typeof req.headers['X-Signature'] === 'string'
+          ? (req.headers['X-Signature'] as string)
+          : ''
+
+    try {
+      const event = parseLemonSqueezyWebhook(rawBody, signature)
+      const result = await confirmLemonSqueezyTopup(event)
+      sendJson(res, 200, { received: true, credited: Boolean(result && !('already' in result && result.already)) })
+    } catch (error) {
+      if (error instanceof HttpError) {
+        sendJson(res, error.statusCode, { error: { code: error.code, message: error.message } })
+        return
+      }
+      sendJson(res, 400, { error: { code: 'WEBHOOK_ERROR', message: 'Webhook processing failed.' } })
+    }
+    return
+  }
 
   if (req.method === 'POST' && path === '/api/v1/cloud/billing/stripe/webhook') {
     const rawBody = await new Promise<string>((resolve, reject) => {
@@ -1867,6 +2196,146 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
       }
       sendJson(res, 400, { error: { code: 'WEBHOOK_ERROR', message: 'Webhook processing failed.' } })
     }
+    return
+  }
+
+  // ─── Dashboard-friendly cloud billing routes (session cookie) ──────────
+  // These match apps/web api-client paths.
+
+  if (req.method === 'GET' && path === '/api/v1/cloud/billing/wallet') {
+    const user = await requireUser(req)
+    const projectId = url.searchParams.get('projectId') || ''
+    if (!projectId) throw new HttpError(422, 'VALIDATION_ERROR', 'projectId is required.')
+    await requireCloudProjectOwner(projectId, user.id)
+    const wallet = await ensureWallet(projectId)
+    sendData(res, 200, {
+      id: wallet.id,
+      projectId: wallet.project_id,
+      balance: wallet.balance_credits,
+      lifetimeCredits: wallet.balance_credits + 0,
+      lifetimeSpend: 0,
+      freeCreditsGranted: wallet.free_credits_granted,
+      createdAt: wallet.created_at,
+      updatedAt: wallet.updated_at,
+    })
+    return
+  }
+
+  if (req.method === 'GET' && path === '/api/v1/cloud/billing/transactions') {
+    const user = await requireUser(req)
+    const projectId = url.searchParams.get('projectId') || ''
+    if (!projectId) throw new HttpError(422, 'VALIDATION_ERROR', 'projectId is required.')
+    await requireCloudProjectOwner(projectId, user.id)
+    const limit = Number(url.searchParams.get('limit') || 50)
+    const { wallet, transactions } = await getWalletWithTransactions(projectId, limit)
+    sendData(
+      res,
+      200,
+      transactions.map((t) => ({
+        id: t.id,
+        walletId: t.wallet_id,
+        type: t.type,
+        creditsDelta: t.credits_delta,
+        balanceAfter: t.balance_after,
+        product: (t.metadata as { product?: string } | null)?.product || null,
+        action: (t.metadata as { action?: string } | null)?.action || null,
+        reference: t.reference,
+        metadata: t.metadata,
+        createdAt: t.created_at,
+      })),
+    )
+    void wallet
+    return
+  }
+
+  if (req.method === 'GET' && path === '/api/v1/cloud/usage/events') {
+    const user = await requireUser(req)
+    const projectId = url.searchParams.get('projectId') || ''
+    if (!projectId) throw new HttpError(422, 'VALIDATION_ERROR', 'projectId is required.')
+    await requireCloudProjectOwner(projectId, user.id)
+    const limit = Number(url.searchParams.get('limit') || 50)
+    const events = await listCloudUsageEvents(projectId, {})
+    sendData(
+      res,
+      200,
+      events.slice(0, limit).map((e) => ({
+        id: e.id,
+        projectId: e.project_id,
+        apiKeyId: e.api_key_id,
+        product: e.product,
+        action: e.action,
+        credits: e.credits,
+        status: e.status,
+        idempotencyKey: e.idempotency_key,
+        metadata: e.metadata,
+        createdAt: e.created_at,
+      })),
+    )
+    return
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/cloud/billing/topup') {
+    const user = await requireUser(req)
+    const body = await parseBody(req)
+    const projectId = typeof body.projectId === 'string' ? body.projectId : ''
+    // Dashboard may send amount as credits (500) or amountUsd (5)
+    let amountUsd = 0
+    if (typeof body.amountUsd === 'number' || body.amountUsd) {
+      amountUsd = Number(body.amountUsd)
+    } else if (typeof body.amount === 'number' || body.amount) {
+      const raw = Number(body.amount)
+      // treat values >= 100 as credits
+      amountUsd = raw >= 100 ? raw * TALOCODE_CLOUD_PRICING.creditUsdValue : raw
+    }
+    if (!projectId || !Number.isFinite(amountUsd) || amountUsd <= 0) {
+      throw new HttpError(422, 'VALIDATION_ERROR', 'projectId and amount (credits or amountUsd) are required.')
+    }
+    await requireCloudProjectOwner(projectId, user.id)
+    const result = await createTopupIntent({
+      projectId,
+      amountUsd,
+      provider: (body.provider as string) || 'lemonsqueezy',
+    })
+    // Shape expected by dashboard
+    const topup = (result as { topup: { id: string; credits?: number; amountUsd?: number; status: string } }).topup
+    const ls = (result as { lemonsqueezy?: { checkoutUrl?: string }; checkoutUrl?: string }).lemonsqueezy
+    sendData(res, 201, {
+      topup: {
+        id: topup.id,
+        walletId: projectId,
+        amount: topup.credits ?? Math.floor(amountUsd / TALOCODE_CLOUD_PRICING.creditUsdValue),
+        status: topup.status,
+      },
+      checkoutUrl: ls?.checkoutUrl || (result as { checkoutUrl?: string }).checkoutUrl || null,
+      lemonsqueezy: ls || null,
+      stripePublishableKey: (result as { stripe?: { publishableKey?: string | null } }).stripe?.publishableKey || null,
+      clientSecret: (result as { stripe?: { clientSecret?: string | null } }).stripe?.clientSecret || null,
+      creditsPerDollar: (result as { creditsPerDollar?: number }).creditsPerDollar,
+    })
+    return
+  }
+
+  if (req.method === 'POST' && path === '/api/v1/cloud/billing/topup/confirm') {
+    const user = await requireUser(req)
+    const body = await parseBody(req)
+    const topupId = typeof body.topupId === 'string' ? body.topupId : ''
+    if (!topupId) throw new HttpError(422, 'VALIDATION_ERROR', 'topupId is required.')
+    const topup = await findTopupById(topupId)
+    if (!topup) throw new HttpError(404, 'TOPUP_NOT_FOUND', 'Top-up not found.')
+    const requestedProjectId = typeof body.projectId === 'string' ? body.projectId : topup.project_id
+    if (requestedProjectId !== topup.project_id) {
+      throw new HttpError(422, 'VALIDATION_ERROR', 'Top-up does not belong to the requested project.')
+    }
+    await requireCloudProjectOwner(topup.project_id, user.id)
+    // Production: only manual/dev confirm; real credits come from webhooks
+    if (process.env.NODE_ENV === 'production' && process.env.TALOCODE_ALLOW_MANUAL_TOPUPS !== 'true') {
+      throw new HttpError(403, 'MANUAL_DISABLED', 'Use Lemon Squeezy checkout; wallet is credited via webhook.')
+    }
+    const result = await confirmTopup(topupId, body.providerReference as string | undefined)
+    sendData(res, 200, {
+      topup: toCloudTopupResponse(result.topup),
+      wallet: toCloudWalletResponse(result.wallet),
+    })
     return
   }
 

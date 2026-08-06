@@ -189,6 +189,13 @@ export const TALOCODE_CLOUD_PRICING = {
     calclane: {
       "calclane.evaluate": 1,
       "calclane.dispatch": 1
+    },
+    reliabilitylane: {
+      "reliabilitylane.patterns": 1,
+      "reliabilitylane.retry": 1,
+      "reliabilitylane.verify": 1,
+      "reliabilitylane.incident": 2,
+      "reliabilitylane.antipatterns": 0
     }
   }
 } as const
