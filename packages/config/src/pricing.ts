@@ -196,6 +196,25 @@ export const TALOCODE_CLOUD_PRICING = {
       "reliabilitylane.verify": 1,
       "reliabilitylane.incident": 2,
       "reliabilitylane.antipatterns": 0
+    },
+    verifylane: {
+      "verifylane.secrets": 3,
+      "verifylane.security": 5,
+      "verifylane.quality": 3,
+      "verifylane.code": 8,
+      "verifylane.diff": 8,
+      "verifylane.agent-output": 5
+    },
+    policylane: {
+      "policylane.check": 2,
+      "policylane.redact": 1
+    },
+    gatelane: {
+      "gatelane.check": 2,
+      "gatelane.guard": 3
+    },
+    spendcaps: {
+      "spendcaps.check": 1
     }
   }
 } as const

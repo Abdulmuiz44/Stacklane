@@ -1922,6 +1922,363 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     throw new HttpError(404, 'NOT_FOUND', 'ReliabilityLane API route not found.', { method: req.method, path })
   }
 
+  // ─── Agent control plane: GateLane / PolicyLane / VerifyLane / SpendCaps ─
+
+  const controlPlaneAuth = async (): Promise<{ id: string; project_id: string }> => {
+    let rawKey: string
+    const authHeader = req.headers['authorization'] || ''
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+      rawKey = authHeader.slice(7)
+    } else if (typeof req.headers['x-api-key'] === 'string') {
+      rawKey = req.headers['x-api-key'] as string
+    } else {
+      throw new HttpError(401, 'MISSING_API_KEY', 'Missing Talocode API key. Provide via Authorization: Bearer header or X-Api-Key header.')
+    }
+    return authenticateTalocodeApiKey(rawKey)
+  }
+
+  if (path.startsWith('/v1/verifylane/')) {
+    const apiKey = await controlPlaneAuth()
+    const {
+      verifySecrets,
+      verifySecurity,
+      verifyQuality,
+      verifyCode,
+      verifyDiff,
+      verifyAgentOutput,
+      getVerifyLanePricing,
+      getVerifyLaneCapabilities,
+      VERIFYLANE_VERSION,
+    } = await import('./services/verifylane.js')
+
+    if (req.method === 'GET' && path === '/v1/verifylane/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'verifylane',
+        version: VERIFYLANE_VERSION,
+        endpoints: getVerifyLaneCapabilities().endpoints,
+      })
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/verifylane/pricing') {
+      sendData(res, 200, getVerifyLanePricing())
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/verifylane/capabilities') {
+      sendData(res, 200, getVerifyLaneCapabilities())
+      return
+    }
+
+    const runVerify = async (
+      action: string,
+      runner: () => unknown,
+    ) => {
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'verifylane',
+        action,
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      try {
+        const result = runner()
+        sendData(res, 200, {
+          ...(result as object),
+          usage: {
+            credits: chargeResult.event.credits,
+            action,
+            remaining: chargeResult.remainingCredits,
+          },
+        })
+      } catch (e) {
+        throw new HttpError(422, 'VALIDATION_ERROR', e instanceof Error ? e.message : 'verify failed')
+      }
+    }
+
+    if (req.method === 'POST' && path === '/v1/verifylane/secrets') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.secrets', () => verifySecrets(body as any))
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/verifylane/security') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.security', () => verifySecurity(body as any))
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/verifylane/quality') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.quality', () => verifyQuality(body as any))
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/verifylane/code') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.code', () => verifyCode(body as any))
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/verifylane/diff') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.diff', () => verifyDiff(body as any))
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/verifylane/agent-output') {
+      const body = await parseBody(req)
+      await runVerify('verifylane.agent-output', () => verifyAgentOutput(body as any))
+      return
+    }
+
+    throw new HttpError(404, 'NOT_FOUND', 'VerifyLane API route not found.', { method: req.method, path })
+  }
+
+  if (path.startsWith('/v1/policylane/')) {
+    const apiKey = await controlPlaneAuth()
+    const {
+      checkPolicy,
+      redact,
+      getPolicyLanePricing,
+      getPolicyLaneCapabilities,
+      POLICYLANE_VERSION,
+    } = await import('./services/policylane.js')
+
+    if (req.method === 'GET' && path === '/v1/policylane/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'policylane',
+        version: POLICYLANE_VERSION,
+        endpoints: getPolicyLaneCapabilities().endpoints,
+      })
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/policylane/pricing') {
+      sendData(res, 200, getPolicyLanePricing())
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/policylane/capabilities') {
+      sendData(res, 200, getPolicyLaneCapabilities())
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/policylane/check') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'policylane',
+        action: 'policylane.check',
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      if (!body.policy || !body.action) {
+        throw new HttpError(422, 'VALIDATION_ERROR', 'action and policy are required.')
+      }
+      const result = checkPolicy(body as any)
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'policylane.check',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/policylane/redact') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'policylane',
+        action: 'policylane.redact',
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = redact(body.value ?? body.payload, body.patterns)
+      sendData(res, 200, {
+        product: 'policylane',
+        version: POLICYLANE_VERSION,
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'policylane.redact',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'PolicyLane API route not found.', { method: req.method, path })
+  }
+
+  if (path.startsWith('/v1/gatelane/')) {
+    const apiKey = await controlPlaneAuth()
+    const {
+      checkToolCall,
+      suggestDangerousTools,
+      getGateLanePricing,
+      getGateLaneCapabilities,
+      GATELANE_VERSION,
+    } = await import('./services/gatelane.js')
+
+    if (req.method === 'GET' && path === '/v1/gatelane/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'gatelane',
+        version: GATELANE_VERSION,
+        endpoints: getGateLaneCapabilities().endpoints,
+      })
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/gatelane/pricing') {
+      sendData(res, 200, getGateLanePricing())
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/gatelane/capabilities') {
+      sendData(res, 200, getGateLaneCapabilities())
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/gatelane/dangerous-tools') {
+      sendData(res, 200, {
+        product: 'gatelane',
+        version: GATELANE_VERSION,
+        tools: suggestDangerousTools(),
+      })
+      return
+    }
+    if (req.method === 'POST' && (path === '/v1/gatelane/check' || path === '/v1/gatelane/guard')) {
+      const body = await parseBody(req)
+      const action = path.endsWith('/guard') ? 'gatelane.guard' : 'gatelane.check'
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'gatelane',
+        action,
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      // guard mode: auto-deny known dangerous tools unless explicitly allowed
+      let policies = Array.isArray(body.policies) ? body.policies : []
+      if (action === 'gatelane.guard') {
+        const danger = suggestDangerousTools().map((t: string) => ({
+          effect: 'deny' as const,
+          tool: t,
+          reason: 'dangerous tool (guard mode)',
+          id: `danger:${t}`,
+        }))
+        policies = [...danger, ...policies]
+      }
+      const result = checkToolCall({
+        tool: String(body.tool || ''),
+        actor: body.actor ? String(body.actor) : undefined,
+        defaultEffect: body.defaultEffect === 'allow' ? 'allow' : 'deny',
+        policies,
+        spend: body.spend,
+        payload: body.payload,
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action,
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'GateLane API route not found.', { method: req.method, path })
+  }
+
+  if (path.startsWith('/v1/spendcaps/')) {
+    const apiKey = await controlPlaneAuth()
+    const {
+      checkSpendCap,
+      getSpendCapsPricing,
+      getSpendCapsCapabilities,
+      SPENDCAPS_VERSION,
+    } = await import('./services/spendcaps.js')
+
+    if (req.method === 'GET' && path === '/v1/spendcaps/health') {
+      sendData(res, 200, {
+        ok: true,
+        service: 'spendcaps',
+        version: SPENDCAPS_VERSION,
+        endpoints: getSpendCapsCapabilities().endpoints,
+      })
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/spendcaps/pricing') {
+      sendData(res, 200, getSpendCapsPricing())
+      return
+    }
+    if (req.method === 'GET' && path === '/v1/spendcaps/capabilities') {
+      sendData(res, 200, getSpendCapsCapabilities())
+      return
+    }
+    if (req.method === 'POST' && path === '/v1/spendcaps/check') {
+      const body = await parseBody(req)
+      const chargeResult = await chargeCredits({
+        projectId: apiKey.project_id,
+        apiKeyId: apiKey.id,
+        product: 'spendcaps',
+        action: 'spendcaps.check',
+      })
+      if (!chargeResult.success) {
+        sendData(res, 402, {
+          ok: false,
+          error: 'insufficient_credits',
+          required: chargeResult.event.credits,
+          available: chargeResult.remainingCredits,
+        })
+        return
+      }
+      const result = checkSpendCap({
+        balanceCredits: Number(body.balanceCredits),
+        costCredits: Number(body.costCredits),
+        spentInWindow: body.spentInWindow != null ? Number(body.spentInWindow) : undefined,
+        windowLimit: body.windowLimit != null ? Number(body.windowLimit) : undefined,
+        monthlySpent: body.monthlySpent != null ? Number(body.monthlySpent) : undefined,
+        monthlyLimit: body.monthlyLimit != null ? Number(body.monthlyLimit) : undefined,
+        warnAtRatio: body.warnAtRatio != null ? Number(body.warnAtRatio) : undefined,
+        action: body.action ? String(body.action) : undefined,
+      })
+      sendData(res, 200, {
+        ...result,
+        usage: {
+          credits: chargeResult.event.credits,
+          action: 'spendcaps.check',
+          remaining: chargeResult.remainingCredits,
+        },
+      })
+      return
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'SpendCaps API route not found.', { method: req.method, path })
+  }
+
   // ─── ClipLoop API (API-key authenticated) ────────────────────────────────
 
   if (path.startsWith('/v1/cliploop/')) {
