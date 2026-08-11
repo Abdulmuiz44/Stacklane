@@ -16,6 +16,7 @@ import {
   findUsageEventByIdempotencyKey,
   createCloudTopup,
   findTopupByProviderReference,
+  findTopupById,
   markTopupSucceeded,
   markTopupFailed
 } from '../repositories/cloud-usage-repo'
@@ -26,6 +27,12 @@ import {
   createStripeEmbeddedCheckoutSession,
   constructStripeWebhookEvent
 } from './payments/stripe-provider'
+import {
+  isLemonSqueezyConfigured,
+  createLemonSqueezyCheckout,
+  parseLemonSqueezyWebhook,
+  type LemonWebhookEvent,
+} from './payments/lemon-squeezy-provider'
 
 export interface ChargeResult {
   success: boolean
@@ -233,7 +240,8 @@ export async function createTopupIntent(input: {
     throw new HttpError(422, 'MINIMUM_TOPUP', `Minimum top-up is $${(TALOCODE_CLOUD_PRICING.minimumTopUpCredits / creditsPerDollar).toFixed(2)} (${TALOCODE_CLOUD_PRICING.minimumTopUpCredits} credits).`)
   }
 
-  const provider = input.provider || 'stripe'
+  // Default provider: Lemon Squeezy (Stripe kept as optional fallback)
+  const provider = (input.provider || process.env.TALOCODE_PAYMENT_PROVIDER || 'lemonsqueezy').toLowerCase()
   const isProduction = process.env.NODE_ENV === 'production' && process.env.TALOCODE_ALLOW_MANUAL_TOPUPS !== 'true'
 
   if (provider === 'manual') {
@@ -255,44 +263,96 @@ export async function createTopupIntent(input: {
     }
   }
 
-  if (!isStripeConfigured()) {
-    throw new HttpError(500, 'STRIPE_NOT_CONFIGURED', 'Stripe is not configured. Set STRIPE_SECRET_KEY for production top-ups.')
+  if (provider === 'lemonsqueezy' || provider === 'lemon') {
+    if (!isLemonSqueezyConfigured()) {
+      throw new HttpError(
+        500,
+        'LEMONSQUEEZY_NOT_CONFIGURED',
+        'Lemon Squeezy is not configured. Set LEMONSQUEEZY_API_KEY, LEMONSQUEEZY_STORE_ID, LEMONSQUEEZY_VARIANT_ID.',
+      )
+    }
+
+    const topup = await createCloudTopup({
+      id: makeId('ctup'),
+      projectId: input.projectId,
+      provider: 'lemonsqueezy',
+      amountUsd: input.amountUsd,
+      credits,
+      status: 'pending',
+    })
+
+    const checkout = await createLemonSqueezyCheckout({
+      topupId: topup.id,
+      projectId: input.projectId,
+      amountUsd: input.amountUsd,
+      credits,
+    })
+
+    return {
+      topup: {
+        id: topup.id,
+        projectId: topup.project_id,
+        provider: topup.provider,
+        amountUsd: topup.amount_usd,
+        credits: topup.credits,
+        status: topup.status,
+        createdAt: topup.created_at,
+        updatedAt: topup.updated_at,
+      },
+      lemonsqueezy: {
+        checkoutId: checkout.checkoutId,
+        checkoutUrl: checkout.checkoutUrl,
+      },
+      // Compatibility aliases for older dashboard clients
+      checkoutUrl: checkout.checkoutUrl,
+      clientSecret: null,
+      stripePublishableKey: null,
+      creditsPerDollar,
+    }
   }
 
-  const topup = await createCloudTopup({
-    id: makeId('ctup'),
-    projectId: input.projectId,
-    provider: 'stripe',
-    amountUsd: input.amountUsd,
-    credits,
-    status: 'pending'
-  })
+  if (provider === 'stripe') {
+    if (!isStripeConfigured()) {
+      throw new HttpError(500, 'STRIPE_NOT_CONFIGURED', 'Stripe is not configured. Set STRIPE_SECRET_KEY for Stripe top-ups.')
+    }
 
-  const checkout = await createStripeEmbeddedCheckoutSession({
-    topupId: topup.id,
-    projectId: input.projectId,
-    amountUsd: input.amountUsd,
-    credits
-  })
+    const topup = await createCloudTopup({
+      id: makeId('ctup'),
+      projectId: input.projectId,
+      provider: 'stripe',
+      amountUsd: input.amountUsd,
+      credits,
+      status: 'pending',
+    })
 
-  return {
-    topup: {
-      id: topup.id,
-      projectId: topup.project_id,
-      provider: topup.provider,
-      amountUsd: topup.amount_usd,
-      credits: topup.credits,
-      status: topup.status,
-      createdAt: topup.created_at,
-      updatedAt: topup.updated_at
-    },
-    stripe: {
-      sessionId: checkout.sessionId,
-      clientSecret: checkout.clientSecret,
-      publishableKey: getStripePublishableKey()
-    },
-    creditsPerDollar
+    const checkout = await createStripeEmbeddedCheckoutSession({
+      topupId: topup.id,
+      projectId: input.projectId,
+      amountUsd: input.amountUsd,
+      credits,
+    })
+
+    return {
+      topup: {
+        id: topup.id,
+        projectId: topup.project_id,
+        provider: topup.provider,
+        amountUsd: topup.amount_usd,
+        credits: topup.credits,
+        status: topup.status,
+        createdAt: topup.created_at,
+        updatedAt: topup.updated_at,
+      },
+      stripe: {
+        sessionId: checkout.sessionId,
+        clientSecret: checkout.clientSecret,
+        publishableKey: getStripePublishableKey(),
+      },
+      creditsPerDollar,
+    }
   }
+
+  throw new HttpError(422, 'UNKNOWN_PROVIDER', `Unknown payment provider: ${provider}. Use lemonsqueezy or stripe.`)
 }
 
 export async function confirmTopup(topupId: string, providerRef?: string) {
@@ -300,10 +360,12 @@ export async function confirmTopup(topupId: string, providerRef?: string) {
 }
 
 export async function creditWalletForTopup(topupId: string, providerRef?: string) {
-  const result = await markTopupSucceeded(topupId)
+  const result = await markTopupSucceeded(topupId, providerRef)
   if (!result) throw new HttpError(404, 'TOPUP_NOT_FOUND', 'Top-up not found or already confirmed.')
 
-  const wallet = await addCredits(result.project_id, result.credits)
+  // Wallet is keyed by project; addCredits expects wallet id in some paths — use project wallet lookup
+  const walletRow = await ensureWallet(result.project_id)
+  const wallet = await addCredits(walletRow.id, result.credits)
   await createWalletTransaction({
     id: makeId('ctxn'),
     walletId: wallet.id,
@@ -311,7 +373,7 @@ export async function creditWalletForTopup(topupId: string, providerRef?: string
     creditsDelta: result.credits,
     balanceAfter: wallet.balance_credits,
     reference: result.id,
-    metadata: { provider: result.provider, amountUsd: result.amount_usd }
+    metadata: { provider: result.provider, amountUsd: result.amount_usd, providerRef: providerRef || null }
   })
 
   return { topup: result, wallet }
@@ -332,12 +394,14 @@ export async function confirmStripeTopup(event: {
     return null
   }
 
-  const topup = await findTopupByProviderReference(event.id)
+  // Prefer lookup by topup id from metadata (provider_reference may not be set yet)
+  let topup = await findTopupById(topupId)
+  if (!topup) topup = await findTopupByProviderReference(event.id)
   if (!topup || topup.status !== 'pending' || topup.provider !== 'stripe') {
     return null
   }
 
-  const expectedCents = topup.amount_usd * 100
+  const expectedCents = Math.round(topup.amount_usd * 100)
   if (event.amount_total !== null && event.amount_total !== expectedCents) {
     await markTopupFailed(topup.id)
     return null
@@ -345,6 +409,55 @@ export async function confirmStripeTopup(event: {
 
   return creditWalletForTopup(topup.id, event.id)
 }
+
+/** Handle Lemon Squeezy order_created (and paid order) webhooks. */
+export async function confirmLemonSqueezyTopup(event: LemonWebhookEvent) {
+  const name = event.meta?.event_name || ''
+  // Credit on paid order events
+  if (!['order_created', 'order_paid', 'subscription_payment_success'].includes(name)) {
+    return null
+  }
+
+  const custom = event.meta?.custom_data || {}
+  const topupId = custom.topup_id || custom.topupId
+  if (!topupId) return null
+
+  const attrs = event.data?.attributes || {}
+  const status = String(attrs.status || attrs.status_formatted || '').toLowerCase()
+  // order_created may be pending; only credit when paid / paid-ish
+  if (name === 'order_created' && status && !['paid', 'active'].includes(status)) {
+    // Some LS payloads use total + status "paid"
+    if (status !== 'paid') return null
+  }
+
+  const topup = await findTopupById(topupId)
+  if (!topup || topup.status !== 'pending' || topup.provider !== 'lemonsqueezy') {
+    // Already credited or wrong provider
+    if (topup?.status === 'succeeded') return { already: true as const, topup }
+    return null
+  }
+
+  // Optional amount check (total is often in cents as total)
+  const total =
+    typeof attrs.total === 'number'
+      ? attrs.total
+      : typeof attrs.total_usd === 'number'
+        ? Math.round(Number(attrs.total_usd) * 100)
+        : null
+  const expectedCents = Math.round(topup.amount_usd * 100)
+  if (total !== null && Math.abs(total - expectedCents) > 1) {
+    // Allow small float noise; fail closed on clear mismatch
+    if (total !== expectedCents) {
+      await markTopupFailed(topup.id)
+      return null
+    }
+  }
+
+  const orderId = event.data?.id || String(attrs.identifier || attrs.order_number || '')
+  return creditWalletForTopup(topup.id, orderId)
+}
+
+export { parseLemonSqueezyWebhook, isLemonSqueezyConfigured, isStripeConfigured }
 
 export async function checkBalance(projectId: string) {
   const wallet = await ensureWallet(projectId)

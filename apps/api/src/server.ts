@@ -25,6 +25,7 @@ import {
 } from './local-store'
 import {
   HttpError,
+  attachCors,
   clearSessionCookie,
   parseBody,
   parseCookies,
@@ -34,7 +35,7 @@ import {
   setSessionCookie
 } from './http'
 import { ensureBootstrapData } from './bootstrap/seed'
-import { createApiSecret, createSessionToken, hashValue, makeId, safeSlug, verifyPassword } from './utils'
+import { createApiSecret, createSessionToken, hashPassword, hashValue, makeId, safeSlug, verifyPassword } from './utils'
 import {
   addOrganizationMember,
   createOrganization,
@@ -60,6 +61,7 @@ import {
   createOrganizationSchema,
   createProjectSchema,
   loginSchema,
+  registerSchema,
   provisionProjectSchema,
   updateEnvironmentSchema,
   updateProjectSchema
@@ -76,7 +78,7 @@ import {
   toRuntimeBindingResponse,
   toUserResponse
 } from './services/formatters'
-import { findUserByEmail, findUserById, touchUserLogin } from './repositories/user-repo'
+import { createUser, findUserByEmail, findUserById, touchUserLogin } from './repositories/user-repo'
 import { createSession, findSessionByHash, revokeSessionByHash, touchSession } from './repositories/session-repo'
 import { createApiKey, findProjectApiKey, listProjectApiKeys, revokeApiKey } from './repositories/api-key-repo'
 import { findRegionById, listRegions } from './repositories/region-repo'
@@ -227,6 +229,8 @@ async function requireCloudProjectOwner(projectId: string, userId: string) {
 
 async function handler(req: IncomingMessage, res: ServerResponse) {
   if (!req.url || !req.method) throw new HttpError(400, 'BAD_REQUEST', 'Malformed request metadata.')
+
+  attachCors(res, req)
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
   const path = url.pathname
@@ -2906,11 +2910,59 @@ async function handler(req: IncomingMessage, res: ServerResponse) {
     }
   }
 
+  if (req.method === 'POST' && path === '/auth/register') {
+    const payload = registerSchema.safeParse(await parseBody(req))
+    if (!payload.success) {
+      throw new HttpError(422, 'VALIDATION_ERROR', payload.error.issues[0]?.message || 'Invalid registration payload.')
+    }
+
+    const email = payload.data.email.toLowerCase().trim()
+    const existing = await findUserByEmail(email)
+    if (existing) {
+      throw new HttpError(409, 'EMAIL_TAKEN', 'An account with this email already exists.')
+    }
+
+    const name =
+      (payload.data.name && payload.data.name.trim()) ||
+      email.split('@')[0] ||
+      'Talocode User'
+
+    const user = await createUser({
+      id: makeId('usr'),
+      email,
+      name,
+      passwordHash: hashPassword(payload.data.password),
+    })
+
+    const token = createSessionToken()
+    await createSession({
+      id: makeId('sess'),
+      userId: user.id,
+      sessionHash: hashValue(token),
+      expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+    })
+
+    await touchUserLogin(user.id)
+    setSessionCookie(res, token)
+
+    await recordAuditEvent({
+      id: makeId('evt'),
+      action: 'auth.register',
+      targetType: 'user',
+      targetId: user.id,
+      actorUserId: user.id,
+      metadata: { email: user.email },
+    })
+
+    sendData(res, 201, toUserResponse(user))
+    return
+  }
+
   if (req.method === 'POST' && path === '/auth/login') {
     const payload = loginSchema.safeParse(await parseBody(req))
     if (!payload.success) throw new HttpError(422, 'VALIDATION_ERROR', 'Invalid login payload.')
 
-    const user = await findUserByEmail(payload.data.email)
+    const user = await findUserByEmail(payload.data.email.toLowerCase().trim())
     if (!user || !user.password_hash || !verifyPassword(payload.data.password, user.password_hash)) {
       throw new HttpError(401, 'INVALID_CREDENTIALS', 'Invalid email/password.')
     }

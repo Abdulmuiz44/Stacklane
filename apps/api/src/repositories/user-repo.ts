@@ -19,6 +19,21 @@ export async function findUserById(id: string) {
   return result.rows[0] || null
 }
 
+export async function createUser(input: {
+  id: string
+  email: string
+  name: string
+  passwordHash: string
+}) {
+  const result = await db.query<UserRecord>(
+    `INSERT INTO users (id, email, name, status, password_hash)
+     VALUES ($1, $2, $3, 'active', $4)
+     RETURNING id, email, name, status, password_hash, last_login_at, created_at, updated_at`,
+    [input.id, input.email.toLowerCase().trim(), input.name.trim(), input.passwordHash],
+  )
+  return result.rows[0]
+}
+
 export async function touchUserLogin(id: string) {
   await db.query('UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = $1', [id])
 }

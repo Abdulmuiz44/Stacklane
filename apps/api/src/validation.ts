@@ -7,6 +7,12 @@ export const loginSchema = z.object({
   password: z.string().min(8)
 })
 
+export const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8).max(128),
+  name: z.string().trim().min(1).max(120).optional(),
+})
+
 export const createOrganizationSchema = z.object({
   name: z.string().trim().min(2),
   slug: z.string().trim().min(2).optional()
