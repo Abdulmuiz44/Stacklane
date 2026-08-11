@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto'
 
+export interface FrameAnalysis {
+  timestamp: number
+  description: string
+  actions: string[]
+  uiElements: string[]
+}
+
 export interface SkillPack {
   name: string
   title: string
@@ -13,11 +20,12 @@ export interface GenerateResult {
   id: string
   object: string
   source: {
-    type: 'github_profile' | 'github_repo' | 'docs' | 'text'
+    type: 'github_profile' | 'github_repo' | 'docs' | 'text' | 'recording'
     username?: string
     repoUrl?: string
     url?: string
     name?: string
+    recordingUrl?: string
   }
   skill: SkillPack
   exports: {
@@ -127,6 +135,35 @@ function buildTextSections(name: string, content: string, focus?: string[]): str
     sections.push(`## Focus Areas\n- ${focus.join('\n- ')}`)
   }
   sections.push(`## Rules\n- Follow the patterns and conventions described in the provided context.\n- Maintain consistency with the described approach.`)
+  return sections
+}
+
+function buildRecordingSections(recordingUrl: string, frames: FrameAnalysis[]): string[] {
+  const sections: string[] = []
+  sections.push(`## Context\nThis skill was generated from a screen recording at **${recordingUrl}**.`)
+  
+  if (frames.length > 0) {
+    const steps = frames.map((frame, i) => {
+      const actions = frame.actions.map(a => `  - ${a}`).join('\n')
+      return `### Step ${i + 1} (t=${frame.timestamp}s)\n${frame.description}\n${actions}`
+    }).join('\n\n')
+    sections.push(`## Observed Workflow\n${steps}`)
+    
+    const allActions = frames.flatMap(f => f.actions)
+    const uniqueActions = [...new Set(allActions)]
+    if (uniqueActions.length > 0) {
+      sections.push(`## Detected Actions\n- ${uniqueActions.join('\n- ')}`)
+    }
+    
+    const uiElements = frames.flatMap(f => f.uiElements)
+    const uniqueElements = [...new Set(uiElements)]
+    if (uniqueElements.length > 0) {
+      sections.push(`## UI Elements\n- ${uniqueElements.join('\n- ')}`)
+    }
+  }
+  
+  sections.push(`## Workflow Rules\n- Follow the exact sequence of steps observed in the recording.\n- Use the same UI elements and actions shown.\n- Maintain the same patterns and conventions demonstrated.`)
+  sections.push(`## Output Style\n- Match the workflow and interaction patterns shown in the recording.\n- Reproduce the demonstrated steps accurately.`)
   return sections
 }
 
@@ -450,4 +487,56 @@ export function exportForCursor(skill: SkillPack): GenerateResult['exports'] {
 
 export function exportForClaude(skill: SkillPack): GenerateResult['exports'] {
   return { claude: buildClaudeExport(skill.skillMd) }
+}
+
+export async function generateFromRecording(input: {
+  recordingUrl: string
+  target: string
+  focus?: string[]
+  frameDescriptions?: FrameAnalysis[]
+}): Promise<GenerateResult> {
+  const focus = input.focus ?? ['workflow', 'ui_elements', 'actions']
+  const frames = input.frameDescriptions ?? []
+  
+  const name = `recording-${Date.now()}`
+  const title = `Screen Recording Skill`
+  const description = `Skill pack generated from screen recording. ${focus.length > 0 ? `Focus: ${focus.join(', ')}.` : ''}`
+  const sections = buildRecordingSections(input.recordingUrl, frames)
+  const generatorInfo = process.env.TALOCODE_SKILLS_PROVIDER ? 'provider-assisted' : 'deterministic'
+  const skillMd = buildSkillMd(name, title, description, sections, generatorInfo)
+
+  const skill: SkillPack = {
+    name,
+    title,
+    description,
+    skillMd,
+    references: [
+      { path: 'references/source-summary.md', content: `Recording: ${input.recordingUrl}\nGenerated: ${now()}\nFrames analyzed: ${frames.length}\nGenerator: ${generatorInfo}` },
+    ],
+    metadata: {
+      sourceType: 'recording',
+      recordingUrl: input.recordingUrl,
+      target: input.target,
+      focus,
+      frameCount: frames.length,
+      generatedAt: now(),
+      generator: `talocode-skills-api-v0.1-${generatorInfo}`,
+    },
+  }
+
+  const exports: GenerateResult['exports'] = {}
+  if (input.target === 'cursor' || input.target === 'opencode') {
+    exports.cursor = buildCursorExport(skillMd)
+  }
+  if (input.target === 'claude' || input.target === 'codra') {
+    exports.claude = buildClaudeExport(skillMd)
+  }
+
+  return {
+    id: generateId(),
+    object: 'skills.generated',
+    source: { type: 'recording', recordingUrl: input.recordingUrl },
+    skill,
+    exports,
+  }
 }

@@ -15,6 +15,21 @@ export interface FileInfoParams {
   fileType: 'word' | 'excel' | 'powerpoint'
 }
 
+export interface ExtractParams {
+  documentUrl: string
+  prompt: string
+  format?: 'json' | 'text' | 'markdown'
+  schema?: Record<string, string>
+}
+
+export interface ExtractionResult {
+  extracted: Record<string, unknown>
+  confidence: number
+  sourceDocument: string
+  prompt: string
+  extractedAt: string
+}
+
 export async function readFile(params: ReadFileParams): Promise<{ ok: boolean; data: Record<string, unknown> }> {
   const { fileUrl, fileType } = params
 
@@ -86,5 +101,55 @@ export async function getFileInfo(params: FileInfoParams): Promise<{ ok: boolean
         version: '1.0',
       },
     },
+  }
+}
+
+export async function extractFromDocument(params: ExtractParams): Promise<ExtractionResult> {
+  const { documentUrl, prompt, format = 'json', schema } = params
+
+  // Simulate extraction - in production, use LLM to extract structured data
+  // This would call the Tera API or similar LLM service
+  
+  const mockExtracted: Record<string, unknown> = {}
+  
+  // Generate mock data based on schema if provided
+  if (schema) {
+    for (const [key, type] of Object.entries(schema)) {
+      switch (type.toLowerCase()) {
+        case 'string':
+          mockExtracted[key] = `extracted_${key}`
+          break
+        case 'number':
+          mockExtracted[key] = Math.floor(Math.random() * 10000)
+          break
+        case 'boolean':
+          mockExtracted[key] = Math.random() > 0.5
+          break
+        case 'array':
+          mockExtracted[key] = []
+          break
+        case 'object':
+          mockExtracted[key] = {}
+          break
+        default:
+          mockExtracted[key] = null
+      }
+    }
+  } else {
+    // Mock extraction based on common document types
+    mockExtracted.documentType = 'unknown'
+    mockExtracted.content = 'Extracted content would appear here'
+    mockExtracted.metadata = {
+      source: documentUrl,
+      processedAt: new Date().toISOString(),
+    }
+  }
+
+  return {
+    extracted: mockExtracted,
+    confidence: 0.85 + Math.random() * 0.15,
+    sourceDocument: documentUrl,
+    prompt,
+    extractedAt: new Date().toISOString(),
   }
 }

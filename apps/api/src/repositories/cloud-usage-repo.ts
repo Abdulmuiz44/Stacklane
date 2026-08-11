@@ -161,13 +161,26 @@ export async function findTopupByProviderReference(providerRef: string) {
   return result.rows[0] || null
 }
 
-export async function markTopupSucceeded(id: string) {
+export async function findTopupById(id: string) {
+  const result = await db.query<CloudTopupRecord>(
+    `SELECT id, project_id, provider, provider_reference, amount_usd, credits, status, created_at, updated_at
+     FROM cloud_topups
+     WHERE id = $1
+     LIMIT 1`,
+    [id],
+  )
+  return result.rows[0] || null
+}
+
+export async function markTopupSucceeded(id: string, providerReference?: string) {
   const result = await db.query<CloudTopupRecord>(
     `UPDATE cloud_topups
-     SET status = 'succeeded', updated_at = now()
+     SET status = 'succeeded',
+         provider_reference = COALESCE($2, provider_reference),
+         updated_at = now()
      WHERE id = $1 AND status = 'pending'
      RETURNING id, project_id, provider, provider_reference, amount_usd, credits, status, created_at, updated_at`,
-    [id]
+    [id, providerReference || null],
   )
   return result.rows[0] || null
 }

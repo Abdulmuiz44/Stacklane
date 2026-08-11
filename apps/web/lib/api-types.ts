@@ -208,6 +208,7 @@ export type CloudTopupIntent = {
     amount: number
     status: string
   }
+  checkoutUrl: string | null
   stripePublishableKey: string | null
   clientSecret: string | null
 }
@@ -221,4 +222,3 @@ export type CloudTopupResult = {
   }
   wallet: CloudWallet
 }
-

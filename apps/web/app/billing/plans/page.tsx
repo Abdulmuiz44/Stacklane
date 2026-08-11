@@ -1,115 +1,121 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { PageScaffold, Panel } from '@/components/app-shell'
 import { apiClient } from '@/lib/api-client'
+import { formatUsdFromCredits } from '@/lib/format'
 import type { CloudPricingTier } from '@/lib/api-types'
-import { Zap, Eye, Camera, Globe, FileText, Layers } from 'lucide-react'
 
-const actionIcons: Record<string, React.ComponentType<{ size?: number }>> = {
-  'agent_browser.check': Zap,
-  'agent_browser.screenshot': Camera,
-  'agent_browser.session.create': Layers,
-  'agent_browser.session.report': FileText,
-  'agent_browser.session.close': Globe,
-  'default': Eye,
-}
-
-export default function PlansPage() {
-  const [pricing, setPricing] = useState<CloudPricingTier[]>([])
+export default function PricingPage() {
+  const [tiers, setTiers] = useState<CloudPricingTier[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('')
 
   useEffect(() => {
-    apiClient.listCloudPricing()
-      .then(setPricing)
-      .catch(() => setPricing([]))
+    apiClient
+      .listCloudPricing()
+      .then(setTiers)
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
 
-  const defaultPricing: CloudPricingTier[] = [
-    { action: 'agent_browser.check', product: 'Agent Browser', credits: 1, description: 'Run a browser check on a URL' },
-    { action: 'agent_browser.screenshot', product: 'Agent Browser', credits: 1, description: 'Capture a screenshot of a URL' },
-    { action: 'agent_browser.extract', product: 'Agent Browser', credits: 15, description: 'Extract structured content from a URL' },
-    { action: 'agent_browser.analyze', product: 'Agent Browser', credits: 25, description: 'Analyze page content with AI' },
-    { action: 'agent_browser.session.create', product: 'Agent Browser', credits: 2, description: 'Create a persistent browser session' },
-    { action: 'agent_browser.session.report', product: 'Agent Browser', credits: 1, description: 'Generate a session report' },
-    { action: 'agent_browser.session.close', product: 'Agent Browser', credits: 0, description: 'Close a session (free)' },
-  ]
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return tiers
+    return tiers.filter(
+      (t) =>
+        t.product.toLowerCase().includes(q) ||
+        t.action.toLowerCase().includes(q) ||
+        (t.description || '').toLowerCase().includes(q),
+    )
+  }, [tiers, filter])
 
-  const items = pricing.length > 0 ? pricing : defaultPricing
+  const products = useMemo(() => [...new Set(tiers.map((t) => t.product))].sort(), [tiers])
 
   return (
     <PageScaffold
       title="Pricing"
-      subtitle="Talocode Cloud usage-based pricing — pay per action, no monthly commitments."
-      breadcrumbs={[{ label: 'Billing', href: '/billing' }, { label: 'Pricing' }]}
+      subtitle="Pay-per-use catalog. 1 credit = $0.01 USD. New wallets start with 100 free credits."
+      breadcrumbs={[{ label: 'Wallet', href: '/billing' }, { label: 'Pricing' }]}
       actions={
-        <a className="btn primary" href="/billing">
-          Back to wallet
-        </a>
+        <Link className="btn primary" href="/billing">
+          Top up wallet
+        </Link>
       }
     >
-      <Panel title="Per-Action Pricing">
-        <div style={{ display: 'grid', gap: 8, marginTop: 4 }}>
-          {items.map((tier) => {
-            const Icon = actionIcons[tier.action] || actionIcons['default']
-            return (
-              <div
-                key={tier.action}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 14px', borderRadius: 8,
-                  border: '1px solid var(--border)', background: 'var(--panel-muted)',
-                }}
-              >
-                <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  background: 'var(--accent-soft)', display: 'grid', placeItems: 'center',
-                  color: 'var(--accent)',
-                }}>
-                  <Icon size={18} />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>
-                    {tier.action}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {tier.description}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--accent)' }}>
-                    {tier.credits}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                    credits
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </Panel>
+      {error ? <div className="alert error">{error}</div> : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <div className="panel">
-          <h2 style={{ margin: '0 0 8px', fontSize: 13 }}>Free Starting Credits</h2>
-          <div style={{ fontSize: 28, fontWeight: 700, color: '#33c38f' }}>1,000</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            Every new project gets 1,000 free credits to start. No credit card required.
-          </div>
+      <div className="grid-4">
+        <div className="stat-card">
+          <p className="label">Credit value</p>
+          <p className="value">$0.01</p>
         </div>
-        <div className="panel">
-          <h2 style={{ margin: '0 0 8px', fontSize: 13 }}>Need More?</h2>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--accent)' }}>Top Up</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            Minimum $100 top-up via Stripe. Credits never expire.
-          </div>
-          <a className="btn primary" href="/billing" style={{ marginTop: 8, display: 'inline-block' }}>
-            Top up now
-          </a>
+        <div className="stat-card">
+          <p className="label">Free grant</p>
+          <p className="value">100</p>
+          <p className="hint">per new project wallet</p>
+        </div>
+        <div className="stat-card">
+          <p className="label">Min top-up</p>
+          <p className="value">500</p>
+          <p className="hint">$5.00</p>
+        </div>
+        <div className="stat-card">
+          <p className="label">Products</p>
+          <p className="value">{products.length || '—'}</p>
         </div>
       </div>
+
+      <Panel title="Catalog">
+        <div className="field" style={{ maxWidth: 360 }}>
+          <label htmlFor="filter">Filter</label>
+          <input
+            id="filter"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search product or action"
+          />
+        </div>
+        {loading ? (
+          <div className="empty">Loading pricing…</div>
+        ) : filtered.length === 0 ? (
+          <div className="empty">
+            <strong>No pricing rows</strong>
+            {error
+              ? 'Could not load catalog from API.'
+              : 'API returned an empty catalog. Check GET /api/v1/cloud/pricing.'}
+          </div>
+        ) : (
+          <div className="table-wrap" style={{ marginTop: 8 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th>Action</th>
+                  <th>Credits</th>
+                  <th>USD</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((t) => (
+                  <tr key={`${t.product}:${t.action}`}>
+                    <td>
+                      <strong>{t.product}</strong>
+                    </td>
+                    <td className="mono">{t.action}</td>
+                    <td>{t.credits}</td>
+                    <td>{formatUsdFromCredits(t.credits)}</td>
+                    <td style={{ color: 'var(--text-secondary)' }}>{t.description || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
     </PageScaffold>
   )
 }

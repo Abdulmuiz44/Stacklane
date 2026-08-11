@@ -13,5 +13,6 @@
       "@stacklane/config": ["../../packages/config/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "exclude": ["src/modules/maillane/**/*.ts"]
 }

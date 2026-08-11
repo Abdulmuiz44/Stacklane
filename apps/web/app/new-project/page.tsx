@@ -1,122 +1,136 @@
 'use client'
 
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { MetaChip, PageScaffold, Panel } from '@/components/app-shell'
+import Link from 'next/link'
+import { PageScaffold, Panel } from '@/components/app-shell'
 import { apiClient } from '@/lib/api-client'
-import type { Organization, ResourceStatus } from '@/lib/api-types'
+import type { Organization } from '@/lib/api-types'
 
-const statuses: ResourceStatus[] = ['provisioning', 'ready', 'paused', 'error']
-
-export default function CreateProjectPage() {
-  const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+export default function NewProjectPage() {
   const router = useRouter()
-
+  const [orgs, setOrgs] = useState<Organization[]>([])
   const [name, setName] = useState('')
-  const [organizationId, setOrganizationId] = useState('')
-  const [status, setStatus] = useState<ResourceStatus>('provisioning')
-  const [region, setRegion] = useState('af-west-1')
+  const [slug, setSlug] = useState('')
   const [description, setDescription] = useState('')
+  const [organizationId, setOrganizationId] = useState('')
+  const [region, setRegion] = useState('global')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     apiClient
       .listOrganizations()
-      .then((data) => {
-        setOrganizations(data)
-        setOrganizationId(data[0]?.id || '')
+      .then((list) => {
+        setOrgs(list)
+        if (list[0]) setOrganizationId(list[0].id)
       })
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setLoading(false))
+      .catch((e) => setError((e as Error).message))
   }, [])
 
-  const validationError = useMemo(() => {
-    if (name.trim().length < 2) return 'Project name must be at least 2 characters.'
-    if (!organizationId) return 'Select an organization before creating a project.'
-    return null
-  }, [name, organizationId])
+  function onNameChange(value: string) {
+    setName(value)
+    if (!slug || slug === slugify(name)) {
+      setSlug(slugify(value))
+    }
+  }
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (validationError) {
-      setError(validationError)
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!organizationId) {
+      setError('Create an organization first.')
       return
     }
-
-    setSubmitting(true)
+    setLoading(true)
     setError(null)
     try {
-      const created = await apiClient.createProject({
-        name,
+      const project = await apiClient.createProject({
+        name: name.trim(),
         organizationId,
-        status,
+        status: 'ready',
         region,
-        description
+        description: description.trim() || 'Talocode Cloud project',
+        slug: slug.trim() || undefined,
       })
-      router.push(`/projects/${created.slug}`)
+      router.push(`/projects/${project.slug}`)
     } catch (err) {
       setError((err as Error).message)
     } finally {
-      setSubmitting(false)
+      setLoading(false)
     }
   }
 
   return (
     <PageScaffold
-      title="Create project"
-      subtitle="Create a control-plane project and set initial operational metadata."
-      breadcrumbs={[{ label: 'Projects', href: '/projects' }, { label: 'Create project' }]}
-      metadata={<MetaChip label="Organizations" value={String(organizations.length)} />}
+      title="New project"
+      subtitle="Projects group API keys and a credit wallet for Talocode Cloud."
+      breadcrumbs={[{ label: 'Projects', href: '/projects' }, { label: 'New' }]}
     >
-      <Panel title="Project registration">
-        <form className="form-grid" onSubmit={onSubmit}>
+      <Panel title="Project details">
+        {orgs.length === 0 ? (
+          <div className="alert">
+            You need an organization first.{' '}
+            <Link href="/organizations">
+              <strong>Create organization</strong>
+            </Link>
+          </div>
+        ) : null}
+        <form onSubmit={onSubmit}>
           <div className="field">
-            <label>Project name</label>
-            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. payments-core" />
+            <label htmlFor="name">Name</label>
+            <input
+              id="name"
+              value={name}
+              onChange={(e) => onNameChange(e.target.value)}
+              placeholder="e.g. production"
+              required
+              minLength={2}
+            />
+          </div>
+          <div className="form-row">
+            <div className="field">
+              <label htmlFor="slug">Slug</label>
+              <input id="slug" value={slug} onChange={(e) => setSlug(slugify(e.target.value))} placeholder="production" />
+            </div>
+            <div className="field">
+              <label htmlFor="org">Organization</label>
+              <select id="org" value={organizationId} onChange={(e) => setOrganizationId(e.target.value)} required>
+                {orgs.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div className="field">
-            <label>Organization</label>
-            <select
-              disabled={loading || !organizations.length}
-              value={organizationId}
-              onChange={(event) => setOrganizationId(event.target.value)}
-            >
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="region">Region label</label>
+            <input id="region" value={region} onChange={(e) => setRegion(e.target.value)} />
           </div>
           <div className="field">
-            <label>Status</label>
-            <select value={status} onChange={(event) => setStatus(event.target.value as ResourceStatus)}>
-              {statuses.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            <label htmlFor="desc">Description</label>
+            <textarea id="desc" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          <div className="field">
-            <label>Region</label>
-            <input value={region} onChange={(event) => setRegion(event.target.value)} />
-          </div>
-          <div className="field" style={{ gridColumn: '1 / -1' }}>
-            <label>Description</label>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
-          </div>
-          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
-            <button className="btn" type="button" onClick={() => router.push('/projects')}>Cancel</button>
-            <button className="btn primary" disabled={submitting || !!validationError}>
-              {submitting ? 'Creating…' : 'Create project'}
+          {error ? <p className="alert error">{error}</p> : null}
+          <div className="actions">
+            <Link className="btn" href="/projects">
+              Cancel
+            </Link>
+            <button className="btn primary" type="submit" disabled={loading || orgs.length === 0}>
+              {loading ? 'Creating…' : 'Create project'}
             </button>
           </div>
-          {error ? <p className="error" style={{ gridColumn: '1 / -1' }}>{error}</p> : null}
         </form>
       </Panel>
     </PageScaffold>
   )
+}
+
+function slugify(s: string) {
+  return s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48)
 }

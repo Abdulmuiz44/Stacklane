@@ -1,0 +1,22 @@
+# Talocode Cloud dashboard — https://dashboard.talocode.site
+# Deploy this app as a separate Netlify site with base directory apps/web
+# or monorepo base Stacklane + this config path.
+
+[build]
+  command = "npm install && npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NEXT_TELEMETRY_DISABLED = "1"
+  # Point browser API calls at production control plane
+  NEXT_PUBLIC_API_BASE_URL = "https://api.talocode.site"
+
+[context.production.environment]
+  NEXT_PUBLIC_API_BASE_URL = "https://api.talocode.site"
+
+[context.deploy-preview.environment]
+  NEXT_PUBLIC_API_BASE_URL = "https://api.talocode.site"

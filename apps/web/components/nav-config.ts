@@ -1,70 +1,41 @@
 import type React from 'react'
 import {
   Activity,
-  BadgeDollarSign,
-  Briefcase,
-  Building2,
-  Database,
-  FolderKanban,
-  FunctionSquare,
-  KeyRound,
-  Logs,
-  Shield,
-  Users,
-  HardDrive,
-  Lock,
-  Cog,
-  ScrollText,
-  Wallet,
-  CreditCard,
   BarChart3,
-  Zap
+  Building2,
+  CreditCard,
+  FolderKanban,
+  KeyRound,
+  Settings,
+  Wallet,
 } from 'lucide-react'
 
 export type NavLeaf = { label: string; href: string; icon: React.ComponentType<{ size?: number }> }
 export type NavSection = { title: string; items: NavLeaf[] }
 
+/** Talocode Cloud only — no infra placeholders, no legacy billing. */
 export const navSections: NavSection[] = [
   {
-    title: 'Platform',
+    title: 'Cloud',
     items: [
       { label: 'Overview', href: '/', icon: Activity },
       { label: 'Projects', href: '/projects', icon: FolderKanban },
-      { label: 'Organizations', href: '/organizations', icon: Building2 }
-    ]
+      { label: 'Organizations', href: '/organizations', icon: Building2 },
+    ],
   },
   {
-    title: 'Infrastructure',
-    items: [
-      { label: 'Databases', href: '/platform/databases', icon: Database },
-      { label: 'Auth', href: '/platform/auth', icon: Lock },
-      { label: 'Storage', href: '/platform/storage', icon: HardDrive },
-      { label: 'Functions', href: '/platform/functions', icon: FunctionSquare },
-      { label: 'Jobs', href: '/platform/jobs', icon: Briefcase }
-    ]
-  },
-  {
-    title: 'Talocode Cloud',
+    title: 'Billing',
     items: [
       { label: 'Wallet', href: '/billing', icon: Wallet },
-      { label: 'Pricing', href: '/billing/plans', icon: CreditCard },
       { label: 'Usage', href: '/billing/usage', icon: BarChart3 },
-      { label: 'API Keys', href: '/usage/api-keys', icon: KeyRound }
-    ]
+      { label: 'Pricing', href: '/billing/plans', icon: CreditCard },
+    ],
   },
   {
-    title: 'Legacy Billing',
+    title: 'Access',
     items: [
-      { label: 'Plans', href: '/billing/plans', icon: BadgeDollarSign },
-      { label: 'Usage Billing', href: '/billing/usage', icon: ScrollText }
-    ]
+      { label: 'API keys', href: '/usage/api-keys', icon: KeyRound },
+      { label: 'Settings', href: '/settings', icon: Settings },
+    ],
   },
-  {
-    title: 'Admin',
-    items: [
-      { label: 'Members', href: '/admin/members', icon: Users },
-      { label: 'Settings', href: '/settings', icon: Cog },
-      { label: 'Audit', href: '/admin/audit', icon: Shield }
-    ]
-  }
 ]

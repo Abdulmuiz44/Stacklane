@@ -3,7 +3,6 @@ import type {
   AuditEvent,
   CloudPricingTier,
   CloudTopupIntent,
-  CloudTopupResult,
   CloudTransaction,
   CloudUsageEvent,
   CloudWallet,
@@ -20,7 +19,9 @@ import type {
   User
 } from './api-types'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000'
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (process.env.NODE_ENV === 'production' ? 'https://api.talocode.site' : 'http://localhost:4000')
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -120,11 +121,6 @@ export const apiClient = {
       body: JSON.stringify({ projectId, amount })
     }),
 
-  confirmCloudTopup: (projectId: string, topupId: string) =>
-    request<CloudTopupResult>('/api/v1/cloud/billing/topup/confirm', {
-      method: 'POST',
-      body: JSON.stringify({ projectId, topupId })
-    })
 }
 
 export function formatTimestamp(value: string) {

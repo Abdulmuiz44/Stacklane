@@ -2,185 +2,211 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { PageScaffold, Panel, MetaChip } from '@/components/app-shell'
-import { apiClient, formatTimestamp } from '@/lib/api-client'
-import type { CloudWallet, CloudTransaction } from '@/lib/api-types'
-import { Wallet, ArrowUpLeft, ArrowDownLeft, Plus, CreditCard } from 'lucide-react'
+import Link from 'next/link'
+import { MetaChip, PageScaffold, Panel } from '@/components/app-shell'
+import { apiClient } from '@/lib/api-client'
+import { formatCredits, formatTimestamp, formatUsdFromCredits } from '@/lib/format'
+import type { CloudTransaction, CloudWallet, Project } from '@/lib/api-types'
 
-export default function BillingOverviewPage() {
+const PRESETS = [500, 1000, 2500, 5000]
+
+export default function BillingPage() {
   const router = useRouter()
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectId, setProjectId] = useState('')
   const [wallet, setWallet] = useState<CloudWallet | null>(null)
-  const [transactions, setTransactions] = useState<CloudTransaction[]>([])
+  const [txns, setTxns] = useState<CloudTransaction[]>([])
+  const [amount, setAmount] = useState('500')
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [projectId, setProjectId] = useState<string | null>(null)
-  const [topupAmount, setTopupAmount] = useState('')
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    apiClient.listProjects()
-      .then((projects) => {
-        if (projects.length === 0) {
-          setLoading(false)
-          return
-        }
-        const pid = projects[0].id
-        setProjectId(pid)
-        return Promise.all([
-          apiClient.getCloudWallet(pid).catch(() => null),
-          apiClient.listCloudTransactions(pid).catch(() => [] as CloudTransaction[]),
-        ])
+    apiClient
+      .listProjects()
+      .then((list) => {
+        setProjects(list)
+        if (list[0]) setProjectId(list[0].id)
       })
-      .then((result) => {
-        if (!result) return
-        const w = result[0] as CloudWallet | null
-        const txs = result[1] as CloudTransaction[]
-        if (w) setWallet(w)
-        setTransactions(txs)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false))
   }, [])
 
-  async function handleTopup() {
-    const amount = Number(topupAmount)
-    if (!projectId || !amount || amount < 100) return
-    const result = await apiClient.createCloudTopup(projectId, amount)
-    if (result.clientSecret && result.stripePublishableKey) {
-      router.push(`/billing/top-up?clientSecret=${result.clientSecret}&publishableKey=${result.stripePublishableKey}`)
-    } else {
-      // Manual topup path (dev/test)
-      await apiClient.confirmCloudTopup(projectId, result.topup.id)
-      window.location.reload()
+  useEffect(() => {
+    if (!projectId) return
+    setError(null)
+    Promise.all([
+      apiClient.getCloudWallet(projectId),
+      apiClient.listCloudTransactions(projectId, 50),
+    ])
+      .then(([w, t]) => {
+        setWallet(w)
+        setTxns(t)
+      })
+      .catch((e) => setError((e as Error).message))
+  }, [projectId])
+
+  async function topUp() {
+    const credits = Number(amount)
+    if (!projectId || !credits || credits < 500) {
+      setError('Minimum top-up is 500 credits ($5.00).')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const result = await apiClient.createCloudTopup(projectId, credits)
+      if (result.checkoutUrl) {
+        window.location.assign(result.checkoutUrl)
+        return
+      }
+      if (result.clientSecret && result.stripePublishableKey) {
+        router.push(
+          `/billing/top-up?clientSecret=${encodeURIComponent(result.clientSecret)}&publishableKey=${encodeURIComponent(result.stripePublishableKey)}`,
+        )
+        return
+      }
+      setError('Checkout is not available for this top-up. Please try again later.')
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
     }
   }
 
-  if (loading) {
-    return (
-      <PageScaffold title="Billing" subtitle="Loading wallet..." breadcrumbs={[{ label: 'Billing' }]}>
-        <div className="table-state"><strong>Loading...</strong></div>
-      </PageScaffold>
-    )
-  }
-
-  const balance = wallet?.balance ?? 0
-  const txnCount = transactions.length
-
   return (
     <PageScaffold
-      title="Billing"
-      subtitle="Talocode Cloud prepaid wallet — credits, top-ups, and usage history."
-      breadcrumbs={[{ label: 'Billing' }]}
+      title="Wallet"
+      subtitle="Prepaid credits for Talocode Cloud APIs. 1 credit = $0.01 USD."
+      breadcrumbs={[{ label: 'Wallet' }]}
       metadata={
-        <>
-          <MetaChip label="Balance" value={`${balance.toLocaleString()} credits`} />
-          <MetaChip label="Transactions" value={String(txnCount)} />
-          {wallet && <MetaChip label="Lifetime spend" value={`${wallet.lifetimeSpend.toLocaleString()} credits`} />}
-        </>
+        wallet ? (
+          <>
+            <MetaChip label="Balance" value={formatCredits(wallet.balance)} />
+            <MetaChip label="USD" value={formatUsdFromCredits(wallet.balance)} />
+          </>
+        ) : null
       }
       actions={
-        <a className="btn primary" href="/billing/plans">
-          <CreditCard size={14} style={{ marginRight: 4 }} />
+        <Link className="btn" href="/billing/plans">
           View pricing
-        </a>
+        </Link>
       }
     >
-      {/* Wallet Balance Card */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <div className="panel" style={{ background: 'linear-gradient(135deg, #1e3a5f, #1b212b)', border: '1px solid #2a4a7a' }}>
-          <div className="panel-head">
-            <h2 style={{ color: '#dbe8ff' }}>Wallet Balance</h2>
-            <Wallet size={20} style={{ color: '#4f8cff' }} />
-          </div>
-          <div style={{ fontSize: 32, fontWeight: 700, color: '#eef3ff', margin: '8px 0' }}>
-            {balance.toLocaleString()}
-            <span style={{ fontSize: 14, fontWeight: 400, color: '#8794a8', marginLeft: 8 }}>credits</span>
-          </div>
-          {wallet && (
-            <div style={{ fontSize: 11, color: '#8794a8' }}>
-              Lifetime: {wallet.lifetimeCredits.toLocaleString()} credits · {wallet.freeCreditsGranted ? 'Includes free grant' : 'No free grant'}
-            </div>
-          )}
-        </div>
+      {error ? <div className="alert error">{error}</div> : null}
 
-        <div className="panel">
-          <div className="panel-head">
-            <h2>Quick Top-Up</h2>
-            <Plus size={16} style={{ color: '#8794a8' }} />
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-            <input
-              type="number"
-              min={100}
-              step={100}
-              placeholder="Amount ($)"
-              value={topupAmount}
-              onChange={(e) => setTopupAmount(e.target.value)}
-              style={{
-                flex: 1, minHeight: 34, borderRadius: 8, border: '1px solid var(--border)',
-                background: '#141a23', color: '#eef3ff', padding: '7px 10px', fontSize: 13,
-              }}
-            />
-            <button
-              className="btn primary"
-              onClick={handleTopup}
-              disabled={!projectId || Number(topupAmount) < 100}
-              style={{ whiteSpace: 'nowrap' }}
-            >
-              <CreditCard size={14} style={{ marginRight: 4 }} />
-              Top Up
-            </button>
-          </div>
-          <div style={{ fontSize: 10, color: '#8794a8', marginTop: 6 }}>Minimum $100.00. Powered by Stripe.</div>
+      <div className="grid-3">
+        <div className="stat-card">
+          <p className="label">Balance</p>
+          <p className="value">{wallet ? formatCredits(wallet.balance) : loading ? '…' : '—'}</p>
+          <p className="hint">{wallet ? formatUsdFromCredits(wallet.balance) : '—'}</p>
+        </div>
+        <div className="stat-card">
+          <p className="label">Lifetime credited</p>
+          <p className="value">{wallet ? formatCredits(wallet.lifetimeCredits) : '—'}</p>
+          <p className="hint">Grants + top-ups</p>
+        </div>
+        <div className="stat-card">
+          <p className="label">Lifetime spend</p>
+          <p className="value">{wallet ? formatCredits(wallet.lifetimeSpend) : '—'}</p>
+          <p className="hint">API usage charges</p>
         </div>
       </div>
 
-      {/* Recent Transactions */}
-      <Panel
-        title="Recent Transactions"
-        actions={
-          <a className="btn ghost" href="/billing/usage" style={{ fontSize: 11 }}>
-            View all usage
-          </a>
-        }
-      >
-        {transactions.length === 0 ? (
-          <div className="table-state">
+      <div className="grid-2">
+        <Panel title="Top up">
+          <div className="field">
+            <label htmlFor="project">Project wallet</label>
+            <select id="project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+              {projects.length === 0 ? <option value="">No projects</option> : null}
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Presets</label>
+            <div className="actions">
+              {PRESETS.map((n) => (
+                <button key={n} type="button" className="btn" onClick={() => setAmount(String(n))}>
+                  {n} cr · {formatUsdFromCredits(n)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="amount">Credits (min 500)</label>
+            <input
+              id="amount"
+              type="number"
+              min={500}
+              step={100}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 0 }}>
+            You will pay {formatUsdFromCredits(Number(amount) || 0)} for {Number(amount) || 0} credits.
+          </p>
+          <button className="btn primary" type="button" disabled={busy || !projectId} onClick={() => void topUp()}>
+            {busy ? 'Starting checkout…' : 'Top up securely'}
+          </button>
+        </Panel>
+
+        <Panel title="How billing works">
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)', display: 'grid', gap: 8 }}>
+            <li>New wallets receive 100 free credits ($1).</li>
+            <li>Minimum top-up is 500 credits ($5).</li>
+            <li>Each API action deducts credits before the request runs.</li>
+            <li>Insufficient balance returns HTTP 402.</li>
+            <li>Open-source local CLIs do not spend cloud credits.</li>
+          </ul>
+          <p style={{ marginBottom: 0, marginTop: 16 }}>
+            <Link className="btn" href="/billing/usage">
+              View usage
+            </Link>
+          </p>
+        </Panel>
+      </div>
+
+      <Panel title="Transactions" noPad>
+        {txns.length === 0 ? (
+          <div className="empty">
             <strong>No transactions yet</strong>
-            <p>Top up your wallet to get started.</p>
+            Top-ups and API charges will appear here.
           </div>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th>Product</th>
-                <th>Credits</th>
-                <th>Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.slice(0, 20).map((txn) => (
-                <tr key={txn.id}>
-                  <td><span className="timestamp">{formatTimestamp(txn.createdAt)}</span></td>
-                  <td>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, textTransform: 'capitalize' }}>
-                      {txn.type === 'topup' || txn.type === 'grant' ? (
-                        <ArrowUpLeft size={12} style={{ color: '#33c38f' }} />
-                      ) : (
-                        <ArrowDownLeft size={12} style={{ color: '#ef6b6b' }} />
-                      )}
-                      {txn.type}
-                    </span>
-                  </td>
-                  <td style={{ color: 'var(--text-muted)' }}>{txn.product || txn.action || '-'}</td>
-                  <td style={{ color: txn.creditsDelta > 0 ? '#33c38f' : '#ef6b6b', fontWeight: 600 }}>
-                    {txn.creditsDelta > 0 ? '+' : ''}{txn.creditsDelta.toLocaleString()}
-                  </td>
-                  <td style={{ fontWeight: 600 }}>{txn.balanceAfter.toLocaleString()}</td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Type</th>
+                  <th>Product</th>
+                  <th>Action</th>
+                  <th>Delta</th>
+                  <th>Balance</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {txns.map((t) => (
+                  <tr key={t.id}>
+                    <td>{formatTimestamp(t.createdAt)}</td>
+                    <td>{t.type}</td>
+                    <td>{t.product || '—'}</td>
+                    <td className="mono">{t.action || '—'}</td>
+                    <td style={{ color: t.creditsDelta >= 0 ? 'var(--ok)' : 'var(--bad)' }}>
+                      {t.creditsDelta >= 0 ? '+' : ''}
+                      {t.creditsDelta}
+                    </td>
+                    <td>{t.balanceAfter}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Panel>
     </PageScaffold>

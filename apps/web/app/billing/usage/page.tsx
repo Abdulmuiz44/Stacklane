@@ -1,92 +1,111 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { PageScaffold, Panel } from '@/components/app-shell'
-import { apiClient, formatTimestamp } from '@/lib/api-client'
-import type { CloudUsageEvent, CloudTransaction } from '@/lib/api-types'
-import { Zap, Eye, Camera, Globe, FileText, Layers, Search, BrainCircuit, ArrowUpLeft, ArrowDownLeft } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { MetaChip, PageScaffold, Panel } from '@/components/app-shell'
+import { apiClient } from '@/lib/api-client'
+import { formatCredits, formatTimestamp } from '@/lib/format'
+import type { CloudUsageEvent, Project } from '@/lib/api-types'
 
-const actionIcons: Record<string, React.ComponentType<{ size?: number; style?: React.CSSProperties }>> = {
-  'agent_browser.check': Zap,
-  'agent_browser.screenshot': Camera,
-  'agent_browser.extract': Search,
-  'agent_browser.analyze': BrainCircuit,
-  'agent_browser.session.create': Layers,
-  'agent_browser.session.report': FileText,
-  'agent_browser.session.close': Globe,
-}
-
-export default function UsageBillingPage() {
+export default function UsagePage() {
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectId, setProjectId] = useState('')
   const [events, setEvents] = useState<CloudUsageEvent[]>([])
-  const [transactions, setTransactions] = useState<CloudTransaction[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'usage' | 'transactions'>('usage')
 
   useEffect(() => {
-    apiClient.listProjects()
-      .then((projects) => {
-        if (projects.length === 0) {
-          setLoading(false)
-          return
-        }
-        const pid = projects[0].id
-        return Promise.all([
-          apiClient.listCloudUsageEvents(pid).catch(() => [] as CloudUsageEvent[]),
-          apiClient.listCloudTransactions(pid, 100).catch(() => [] as CloudTransaction[]),
-        ])
+    apiClient
+      .listProjects()
+      .then((list) => {
+        setProjects(list)
+        if (list[0]) setProjectId(list[0].id)
       })
-      .then((result) => {
-        if (!result) return
-        const evts = result[0] as CloudUsageEvent[]
-        const txs = result[1] as CloudTransaction[]
-        setEvents(evts)
-        setTransactions(txs)
-        setLoading(false)
-      })
-      .catch(() => setLoading(false))
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!projectId) return
+    apiClient
+      .listCloudUsageEvents(projectId, 100)
+      .then(setEvents)
+      .catch((e) => setError((e as Error).message))
+  }, [projectId])
+
+  const totals = useMemo(() => {
+    const byProduct: Record<string, number> = {}
+    let sum = 0
+    for (const e of events) {
+      sum += e.credits || 0
+      byProduct[e.product] = (byProduct[e.product] || 0) + (e.credits || 0)
+    }
+    return { sum, byProduct }
+  }, [events])
 
   return (
     <PageScaffold
-      title="Usage & Billing"
-      subtitle="Detailed usage events and wallet transaction history."
-      breadcrumbs={[{ label: 'Billing', href: '/billing' }, { label: 'Usage' }]}
-      actions={
-        <a className="btn primary" href="/billing">
-          Back to wallet
-        </a>
+      title="Usage"
+      subtitle="Metered API calls and credit spend for the selected project."
+      breadcrumbs={[{ label: 'Wallet', href: '/billing' }, { label: 'Usage' }]}
+      metadata={
+        <>
+          <MetaChip label="Events" value={String(events.length)} />
+          <MetaChip label="Credits (page)" value={formatCredits(totals.sum)} />
+        </>
       }
     >
-      {/* Tab navigation */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
-        <button
-          className={`btn ${tab === 'usage' ? 'primary' : ''}`}
-          onClick={() => setTab('usage')}
-        >
-          Usage Events
-        </button>
-        <button
-          className={`btn ${tab === 'transactions' ? 'primary' : ''}`}
-          onClick={() => setTab('transactions')}
-        >
-          Transactions
-        </button>
+      {error ? <div className="alert error">{error}</div> : null}
+
+      <Panel title="Filter">
+        <div className="field" style={{ marginBottom: 0, maxWidth: 360 }}>
+          <label htmlFor="project">Project</label>
+          <select id="project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Panel>
+
+      <div className="grid-3">
+        {Object.keys(totals.byProduct).length === 0 ? (
+          <div className="stat-card">
+            <p className="label">By product</p>
+            <p className="value" style={{ fontSize: 16 }}>
+              No usage yet
+            </p>
+          </div>
+        ) : (
+          Object.entries(totals.byProduct)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 6)
+            .map(([product, credits]) => (
+              <div className="stat-card" key={product}>
+                <p className="label">{product}</p>
+                <p className="value" style={{ fontSize: 20 }}>
+                  {formatCredits(credits)}
+                </p>
+              </div>
+            ))
+        )}
       </div>
 
-      {tab === 'usage' ? (
-        <Panel title="Usage Events">
-          {loading ? (
-            <div className="table-state"><strong>Loading...</strong></div>
-          ) : events.length === 0 ? (
-            <div className="table-state">
-              <strong>No usage events yet</strong>
-              <p>Usage events appear here once you start using Talocode Cloud services.</p>
-            </div>
-          ) : (
+      <Panel title="Recent events" noPad>
+        {loading ? (
+          <div className="empty">Loading…</div>
+        ) : events.length === 0 ? (
+          <div className="empty">
+            <strong>No usage events</strong>
+            Call a hosted API with your project key to see metering here.
+          </div>
+        ) : (
+          <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Date</th>
+                  <th>When</th>
                   <th>Product</th>
                   <th>Action</th>
                   <th>Credits</th>
@@ -94,77 +113,20 @@ export default function UsageBillingPage() {
                 </tr>
               </thead>
               <tbody>
-                {events.map((evt) => {
-                  const Icon = actionIcons[evt.action] || Eye
-                  return (
-                    <tr key={evt.id}>
-                      <td><span className="timestamp">{formatTimestamp(evt.createdAt)}</span></td>
-                      <td>{evt.product}</td>
-                      <td>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                          <Icon size={12} style={{ color: 'var(--text-muted)' }} />
-                          {evt.action}
-                        </span>
-                      </td>
-                      <td style={{ color: '#ef6b6b', fontWeight: 600 }}>-{evt.credits}</td>
-                      <td>
-                        <span className={`status ${evt.status === 'succeeded' ? 'healthy' : 'warning'}`}>
-                          {evt.status}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </Panel>
-      ) : (
-        <Panel title="Wallet Transactions">
-          {loading ? (
-            <div className="table-state"><strong>Loading...</strong></div>
-          ) : transactions.length === 0 ? (
-            <div className="table-state">
-              <strong>No transactions yet</strong>
-              <p>Top up your wallet or use Talocode Cloud services to see transactions.</p>
-            </div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Type</th>
-                  <th>Reference</th>
-                  <th>Credits</th>
-                  <th>Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((txn) => (
-                  <tr key={txn.id}>
-                    <td><span className="timestamp">{formatTimestamp(txn.createdAt)}</span></td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, textTransform: 'capitalize' }}>
-                        {txn.type === 'topup' || txn.type === 'grant' ? (
-                          <ArrowUpLeft size={12} style={{ color: '#33c38f' }} />
-                        ) : (
-                          <ArrowDownLeft size={12} style={{ color: '#ef6b6b' }} />
-                        )}
-                        {txn.type}
-                      </span>
-                    </td>
-                    <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{txn.reference || txn.product || '-'}</td>
-                    <td style={{ color: txn.creditsDelta > 0 ? '#33c38f' : '#ef6b6b', fontWeight: 600 }}>
-                      {txn.creditsDelta > 0 ? '+' : ''}{txn.creditsDelta.toLocaleString()}
-                    </td>
-                    <td style={{ fontWeight: 600 }}>{txn.balanceAfter.toLocaleString()}</td>
+                {events.map((e) => (
+                  <tr key={e.id}>
+                    <td>{formatTimestamp(e.createdAt)}</td>
+                    <td>{e.product}</td>
+                    <td className="mono">{e.action}</td>
+                    <td>{e.credits}</td>
+                    <td>{e.status}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-        </Panel>
-      )}
+          </div>
+        )}
+      </Panel>
     </PageScaffold>
   )
 }

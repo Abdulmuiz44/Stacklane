@@ -2,270 +2,199 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import {
-  Bell,
-  ChevronDown,
-  CircleHelp,
-  Command,
-  Menu,
-  Moon,
-  Plus,
-  Search,
-  Sun,
-  X,
-  ChevronRight,
-  LogOut
-} from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { LogOut, Menu, X } from 'lucide-react'
+import { type ReactNode, useEffect, useState } from 'react'
 import { navSections } from './nav-config'
 import { apiClient } from '@/lib/api-client'
 import type { User } from '@/lib/api-types'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
+import { statusTone } from '@/lib/format'
 
-const STORAGE_KEY = 'stacklane.nav.expanded'
+export function StatusBadge({ value }: { value: string }) {
+  const tone = statusTone(value)
+  return <span className={`badge ${tone}`}>{value || 'unknown'}</span>
+}
 
-function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const path = usePathname()
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-
-  useEffect(() => {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      setExpanded(JSON.parse(raw))
-      return
-    }
-
-    setExpanded(Object.fromEntries(navSections.map((section) => [section.title, true])))
-  }, [])
-
-  useEffect(() => {
-    if (Object.keys(expanded).length) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(expanded))
-    }
-  }, [expanded])
-
+export function MetaChip({ label, value }: { label: string; value: string }) {
   return (
-    <>
-      <aside className={`sidebar ${open ? 'open' : ''}`}>
-        <div className="sidebar-body">
-          {navSections.map((section) => {
-            const isExpanded = expanded[section.title] ?? true
-            return (
-              <div key={section.title} className="nav-section">
-                <button
-                  className="nav-group-toggle"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [section.title]: !isExpanded }))}
-                  aria-expanded={isExpanded}
-                >
-                  <span className="nav-label">{section.title}</span>
-                  <ChevronDown size={14} className={`collapse-icon ${isExpanded ? 'open' : ''}`} />
-                </button>
-                <div className={`nav-group-items ${isExpanded ? 'expanded' : 'collapsed'}`}>
-                  {section.items.map((item) => {
-                    const Icon = item.icon
-                    const active = path === item.href || path.startsWith(`${item.href}/`)
-                    return (
-                      <Link key={item.href} href={item.href} className={`nav-item ${active ? 'active' : ''}`}>
-                        <Icon size={16} />
-                        <span>{item.label}</span>
-                        <ChevronRight size={14} className="chevron" />
-                      </Link>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </aside>
-      {open && <button className="overlay" onClick={onClose} aria-label="Close menu" />}
-    </>
+    <span className="chip">
+      {label}: <strong>{value}</strong>
+    </span>
   )
 }
 
-function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
-  if (!open) return null
-
-  return (
-    <div className="palette-wrap" role="dialog" aria-modal="true" aria-label="Quick search">
-      <button className="overlay palette-overlay" onClick={onClose} aria-label="Close quick search" />
-      <div className="palette">
-        <div className="palette-head">
-          <Command size={16} />
-          <input autoFocus placeholder="Quick search projects, orgs, pages" aria-label="Command palette search" />
-          <button className="icon-btn" onClick={onClose} aria-label="Close palette">
-            <X size={16} />
-          </button>
-        </div>
-        <p className="palette-hint">Use Enter to jump. This is a UI placeholder for indexed command search.</p>
-      </div>
-    </div>
-  )
-}
-
-function TopBar({
-  onToggle,
-  onOpenPalette,
-  user,
-  onLogout
+export function Panel({
+  title,
+  actions,
+  children,
+  noPad,
 }: {
-  onToggle: () => void
-  onOpenPalette: () => void
-  user: User | null
-  onLogout: () => Promise<void>
+  title: string
+  actions?: ReactNode
+  children: ReactNode
+  noPad?: boolean
 }) {
   return (
-    <header className="topbar">
-      <div className="left">
-        <button className="icon-btn" onClick={onToggle} aria-label="Toggle navigation">
-          <Menu size={18} />
-        </button>
-        <div className="wordmark">Stacklane Console</div>
+    <section className="panel">
+      <div className="panel-head">
+        <h2>{title}</h2>
+        {actions ? <div className="actions">{actions}</div> : null}
       </div>
-      <button className="search" onClick={onOpenPalette} aria-label="Open global search">
-        <Search size={16} />
-        <span>Search organizations, projects, pages</span>
-        <kbd>⌘K</kbd>
-      </button>
-      <div className="right">
-        <button className="icon-btn" aria-label="Quick actions">
-          <Plus size={18} />
-        </button>
-        <button className="icon-btn" aria-label="Notifications">
-          <Bell size={18} />
-        </button>
-        <ThemeToggle />
-        <button className="icon-btn" aria-label="Help">
-          <CircleHelp size={18} />
-        </button>
-        <div className="user-block">
-          <button className="avatar" aria-label="User menu">
-            {(user?.name || 'SL').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}
-          </button>
-          <div className="user-meta">
-            <strong>{user?.name || 'Loading…'}</strong>
-            <span>{user?.email || ''}</span>
-          </div>
-          <button className="icon-btn" onClick={onLogout} aria-label="Logout">
-            <LogOut size={16} />
-          </button>
-        </div>
-      </div>
-    </header>
-  )
-}
-
-export function AppShell({ children }: { children: ReactNode }) {
-  const router = useRouter()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [paletteOpen, setPaletteOpen] = useState(false)
-  const [user, setUser] = useState<User | null>(null)
-
-  useEffect(() => {
-    apiClient.me().then(setUser).catch(() => router.push('/signin'))
-  }, [router])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setPaletteOpen(true)
-      }
-      if (event.key === 'Escape') {
-        setPaletteOpen(false)
-      }
-    }
-
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
-
-  async function logout() {
-    await apiClient.logout()
-    router.push('/signin')
-  }
-
-  return (
-    <div className="shell">
-      <TopBar onToggle={() => setDrawerOpen((v) => !v)} onOpenPalette={() => setPaletteOpen(true)} user={user} onLogout={logout} />
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <div className="shell-layout">
-        <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
-        <main className="content" onClick={() => setDrawerOpen(false)}>
-          {children}
-        </main>
-      </div>
-    </div>
+      <div className={noPad ? undefined : 'panel-body'}>{children}</div>
+    </section>
   )
 }
 
 export function PageScaffold({
   title,
   subtitle,
-  breadcrumbs = [],
-  actions,
+  breadcrumbs,
   metadata,
-  children
+  actions,
+  children,
 }: {
   title: string
-  subtitle: string
+  subtitle?: string
   breadcrumbs?: Array<{ label: string; href?: string }>
-  actions?: ReactNode
   metadata?: ReactNode
+  actions?: ReactNode
   children: ReactNode
 }) {
-  const crumbItems = useMemo(
-    () => [
-      { label: 'Console', href: '/' },
-      ...breadcrumbs
-    ],
-    [breadcrumbs]
-  )
-
   return (
-    <section className="page">
-      <div className="page-header">
+    <div>
+      <div className="page-head">
         <div>
-          <nav className="breadcrumbs" aria-label="Breadcrumbs">
-            {crumbItems.map((crumb, index) => (
-              <span key={`${crumb.label}-${index}`}>
-                {crumb.href ? <Link href={crumb.href}>{crumb.label}</Link> : crumb.label}
-                {index < crumbItems.length - 1 ? <ChevronRight size={12} /> : null}
-              </span>
-            ))}
-          </nav>
+          {breadcrumbs?.length ? (
+            <div className="breadcrumbs">
+              {breadcrumbs.map((crumb, i) => (
+                <span key={`${crumb.label}-${i}`}>
+                  {i > 0 ? ' / ' : null}
+                  {crumb.href ? <Link href={crumb.href}>{crumb.label}</Link> : crumb.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
           <h1>{title}</h1>
-          <p>{subtitle}</p>
-          {metadata ? <div className="meta-strip">{metadata}</div> : null}
+          {subtitle ? <p className="subtitle">{subtitle}</p> : null}
+          {metadata ? <div className="meta-row">{metadata}</div> : null}
         </div>
-        <div className="page-actions">{actions}</div>
+        {actions ? <div className="actions">{actions}</div> : null}
       </div>
-      <div className="page-content">{children}</div>
-    </section>
+      <div className="stack">{children}</div>
+    </div>
   )
 }
 
-export function Panel({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
+function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const path = usePathname()
+
   return (
-    <article className="panel">
-      <div className="panel-head">
-        <h2>{title}</h2>
-        {actions}
+    <>
+      <aside className={`sidebar ${open ? 'open' : ''}`}>
+        <div className="sidebar-brand">
+          <span className="brand-mark">T</span>
+          <div>
+            <div>Talocode</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>Cloud</div>
+          </div>
+        </div>
+        <div className="sidebar-body">
+          {navSections.map((section) => (
+            <div key={section.title} className="nav-section">
+              <div className="nav-section-title">{section.title}</div>
+              {section.items.map((item) => {
+                const Icon = item.icon
+                const active =
+                  item.href === '/'
+                    ? path === '/'
+                    : path === item.href || path.startsWith(`${item.href}/`)
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`nav-item ${active ? 'active' : ''}`}
+                    onClick={onClose}
+                  >
+                    <Icon size={16} />
+                    <span>{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+        <div className="sidebar-foot">
+          1 credit = $0.01 · prepaid wallet
+        </div>
+      </aside>
+      {open ? <button className="overlay" onClick={onClose} aria-label="Close menu" type="button" /> : null}
+    </>
+  )
+}
+
+function TopBar({
+  onToggle,
+  user,
+  onLogout,
+}: {
+  onToggle: () => void
+  user: User | null
+  onLogout: () => Promise<void>
+}) {
+  return (
+    <header className="topbar">
+      <div className="left">
+        <button className="icon-btn menu-btn" onClick={onToggle} aria-label="Toggle navigation" type="button">
+          <Menu size={18} />
+        </button>
+        <span style={{ fontWeight: 600, letterSpacing: '-0.02em' }}>Dashboard</span>
       </div>
-      {children}
-    </article>
+      <div className="right">
+        <ThemeToggle />
+        {user ? (
+          <span className="chip" title={user.email}>
+            {user.name || user.email}
+          </span>
+        ) : null}
+        <button className="icon-btn" onClick={() => void onLogout()} aria-label="Sign out" type="button" title="Sign out">
+          <LogOut size={16} />
+        </button>
+      </div>
+    </header>
   )
 }
 
-export function MetaChip({ label, value }: { label: string; value: string }) {
+export function AppShell({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const router = useRouter()
+  const path = usePathname()
+
+  useEffect(() => {
+    setOpen(false)
+  }, [path])
+
+  useEffect(() => {
+    apiClient
+      .me()
+      .then(setUser)
+      .catch(() => setUser(null))
+  }, [])
+
+  async function onLogout() {
+    try {
+      await apiClient.logout()
+    } catch {
+      /* ignore */
+    }
+    router.push('/signin')
+  }
+
   return (
-    <span className="meta-chip">
-      <small>{label}</small>
-      <strong>{value}</strong>
-    </span>
+    <div className="app-frame">
+      <Sidebar open={open} onClose={() => setOpen(false)} />
+      <TopBar onToggle={() => setOpen((v) => !v)} user={user} onLogout={onLogout} />
+      <main className="main">{children}</main>
+    </div>
   )
-}
-
-export function StatusBadge({ value }: { value: 'healthy' | 'warning' | 'paused' }) {
-  return <span className={`status ${value}`}>{value}</span>
 }

@@ -64,6 +64,25 @@ Authenticated with an active API key.
 
 - `POST /api/v1/files`
 
+## ScreenLane Image Analysis
+
+Authenticated with `Authorization: Bearer $TALOCODE_API_KEY` or `X-Api-Key: $TALOCODE_API_KEY`.
+
+- `GET /v1/screenlane/health`
+- `POST /v1/screenlane/analyze`
+
+`POST /v1/screenlane/analyze` accepts a base64-encoded JPEG, PNG, or WebP image up to 10 MiB after decoding. The request body is limited to 14 MiB to accommodate base64 and JSON overhead. The declared `mimeType` must match the image signature. Requests may set `features` to `text`, `labels`, or both. It returns provider-neutral extracted text and labels:
+
+```json
+{
+  "imageBase64": "...",
+  "mimeType": "image/png",
+  "features": ["text", "labels"]
+}
+```
+
+The endpoint is disabled until `SCREENLANE_VISION_PROVIDER_URL` is configured. That internal adapter URL receives `{ image: { base64, mimeType }, features }` and returns `{ text?, labels?: [{ description, confidence? }] }`, keeping the public Talocode contract independent of its analysis implementation.
+
 ## Errors
 
 ```json

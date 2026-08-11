@@ -1,58 +1,77 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { MetaChip, PageScaffold, Panel } from '@/components/app-shell'
+import Link from 'next/link'
+import { PageScaffold, Panel, StatusBadge } from '@/components/app-shell'
 import { apiClient } from '@/lib/api-client'
+import { formatTimestamp } from '@/lib/format'
 import type { Project } from '@/lib/api-types'
-import { ResourceTable, dateCell, statusCell } from '@/components/ui/resource-table'
 
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([])
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     apiClient
       .listProjects()
       .then(setProjects)
-      .catch((err) => setError(err.message))
+      .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false))
   }, [])
 
   return (
     <PageScaffold
       title="Projects"
-      subtitle="Tenant project inventory with statuses and ownership links."
+      subtitle="Each project has API keys and a prepaid credit wallet."
       breadcrumbs={[{ label: 'Projects' }]}
-      metadata={
-        <>
-          <MetaChip label="Total" value={String(projects.length)} />
-          <MetaChip label="Healthy" value={String(projects.filter((entry) => entry.status === 'ready').length)} />
-        </>
-      }
       actions={
-        <>
-          <a className="btn ghost" href="/organizations">Manage orgs</a>
-          <a className="btn primary" href="/new-project">Create project</a>
-        </>
+        <Link className="btn primary" href="/new-project">
+          New project
+        </Link>
       }
     >
-      <Panel title="All projects">
-        {error ? <div className="table-state">Failed to load projects: {error}</div> : null}
-        <ResourceTable
-          loading={loading}
-          rows={projects}
-          rowHref={(row) => `/projects/${row.slug}`}
-          emptyTitle="No projects created"
-          emptyDescription="Create your first project to initialize control-plane resources."
-          columns={[
-            { key: 'name', title: 'Name', render: (row) => <strong>{row.name}</strong> },
-            { key: 'org', title: 'Organization', render: (row) => row.organization?.name || '-' },
-            { key: 'status', title: 'Status', render: (row) => statusCell(row.status) },
-            { key: 'created', title: 'Created', render: (row) => dateCell(row.createdAt) },
-            { key: 'updated', title: 'Updated', render: (row) => dateCell(row.updatedAt) }
-          ]}
-        />
+      {error ? <div className="alert error">{error}</div> : null}
+      <Panel title="All projects" noPad>
+        {loading ? (
+          <div className="empty">Loading…</div>
+        ) : projects.length === 0 ? (
+          <div className="empty">
+            <strong>No projects</strong>
+            Create your first project to start using Talocode Cloud APIs.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Slug</th>
+                  <th>Organization</th>
+                  <th>Region</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {projects.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <Link href={`/projects/${p.slug}`}>{p.name}</Link>
+                    </td>
+                    <td className="mono">{p.slug}</td>
+                    <td>{p.organization?.name || '—'}</td>
+                    <td>{p.region || '—'}</td>
+                    <td>
+                      <StatusBadge value={p.status} />
+                    </td>
+                    <td>{formatTimestamp(p.updatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Panel>
     </PageScaffold>
   )

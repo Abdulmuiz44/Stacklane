@@ -1,9 +1,5 @@
-import { ResourcePage } from '@/components/resource-page'
+import { redirect } from 'next/navigation'
 
 export default function Page() {
-  return <ResourcePage title="Members" subtitle="Team members, roles, and tenant access posture." rows={[
-    { name: 'primary', type: 'Core', region: 'af-west-1', status: 'healthy' },
-    { name: 'worker-1', type: 'Worker', region: 'af-west-1', status: 'healthy' },
-    { name: 'canary', type: 'Canary', region: 'af-west-1', status: 'warning' }
-  ]} />
+  redirect('/settings')
 }

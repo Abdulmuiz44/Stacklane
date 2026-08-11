@@ -1,0 +1,2 @@
+# Fallback for static hosts; Netlify Next plugin handles app routing.
+/*    /index.html   200
