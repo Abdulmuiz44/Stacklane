@@ -92,7 +92,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     <>
       <aside className={`sidebar ${open ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <span className="brand-mark">T</span>
+          <img className="brand-mark" src="/assets/talocode-logo.jpg" alt="Talocode" width="32" height="32" />
           <div>
             <div>Talocode</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>Cloud</div>

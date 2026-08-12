@@ -121,12 +121,7 @@ textarea {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  font-weight: 700;
+  object-fit: cover;
 }
 
 .sidebar-body {
