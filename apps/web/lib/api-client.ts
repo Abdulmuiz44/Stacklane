@@ -6,6 +6,9 @@ import type {
   CloudTransaction,
   CloudUsageEvent,
   CloudWallet,
+  TcodeChallenge,
+  TcodeClaimResult,
+  TcodeHoldings,
   Environment,
   Organization,
   Project,
@@ -119,6 +122,32 @@ export const apiClient = {
     request<CloudTopupIntent>('/api/v1/cloud/billing/topup', {
       method: 'POST',
       body: JSON.stringify({ projectId, amount })
+    }),
+
+  createTcodeChallenge: (projectId: string) =>
+    request<TcodeChallenge>('/api/v1/cloud/tcode/challenge', {
+      method: 'POST',
+      body: JSON.stringify({ projectId }),
+    }),
+
+  linkTcodeWallet: (input: {
+    projectId: string
+    walletAddress: string
+    signature: string
+    nonce: string
+  }) =>
+    request<{ linked: boolean; walletAddress: string }>('/api/v1/cloud/tcode/link', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  getTcodeHoldings: (projectId: string) =>
+    request<TcodeHoldings>(`/api/v1/cloud/tcode/holdings?projectId=${encodeURIComponent(projectId)}`),
+
+  claimTcodeCredits: (projectId: string) =>
+    request<TcodeClaimResult>('/api/v1/cloud/tcode/claim', {
+      method: 'POST',
+      body: JSON.stringify({ projectId }),
     }),
 
 }

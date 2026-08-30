@@ -168,10 +168,45 @@ export type CloudWallet = {
   updatedAt: string
 }
 
+export type TcodeTier = {
+  key: string
+  minTCODE: number
+  monthlyCredits: number
+}
+
+export type TcodeHoldings = {
+  projectId: string
+  walletAddress: string
+  rawBalance: string
+  decimals: number
+  tcodeTokens: number
+  tier: TcodeTier | null
+  period: string
+  claimedThisPeriod: boolean
+  linkedAt: string
+}
+
+export type TcodeChallenge = {
+  nonce: string
+  expiresAt: string
+  message: string
+}
+
+export type TcodeClaimResult = {
+  granted: number
+  alreadyClaimed: boolean
+  reason: string
+  period: string
+  tier: TcodeTier | null
+  tcodeTokens: number
+  balance: number | null
+  wallet: CloudWallet | null
+}
+
 export type CloudTransaction = {
   id: string
   walletId: string
-  type: 'charge' | 'topup' | 'grant' | 'refund'
+  type: 'charge' | 'topup' | 'grant' | 'refund' | 'tcode_tier'
   creditsDelta: number
   balanceAfter: number
   product: string | null

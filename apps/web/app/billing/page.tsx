@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { MetaChip, PageScaffold, Panel } from '@/components/app-shell'
+import { TcodeHoldPanel } from '@/components/tcode-hold-panel'
 import { apiClient } from '@/lib/api-client'
 import { formatCredits, formatTimestamp, formatUsdFromCredits } from '@/lib/format'
 import type { CloudTransaction, CloudWallet, Project } from '@/lib/api-types'
@@ -45,6 +46,19 @@ export default function BillingPage() {
       })
       .catch((e) => setError((e as Error).message))
   }, [projectId])
+
+  function reloadWallet() {
+    if (!projectId) return
+    Promise.all([
+      apiClient.getCloudWallet(projectId),
+      apiClient.listCloudTransactions(projectId, 50),
+    ])
+      .then(([w, t]) => {
+        setWallet(w)
+        setTxns(t)
+      })
+      .catch((e) => setError((e as Error).message))
+  }
 
   async function topUp() {
     const credits = Number(amount)
@@ -113,6 +127,8 @@ export default function BillingPage() {
         </div>
       </div>
 
+      <TcodeHoldPanel projectId={projectId} onClaimed={reloadWallet} />
+
       <div className="grid-2">
         <Panel title="Top up">
           <div className="field">
@@ -162,6 +178,7 @@ export default function BillingPage() {
             <li>Each API action deducts credits before the request runs.</li>
             <li>Insufficient balance returns HTTP 402.</li>
             <li>Open-source local CLIs do not spend cloud credits.</li>
+            <li>$TCODE claims add usage credits to this same wallet once per UTC month.</li>
           </ul>
           <p style={{ marginBottom: 0, marginTop: 16 }}>
             <Link className="btn" href="/billing/usage">
