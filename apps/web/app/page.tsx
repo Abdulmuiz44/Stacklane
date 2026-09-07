@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { FirstSuccessChecklist } from '@/components/first-success-checklist'
 import Link from 'next/link'
 import { MetaChip, PageScaffold, Panel, StatusBadge } from '@/components/app-shell'
 import { apiClient } from '@/lib/api-client'
@@ -82,30 +83,7 @@ export default function OverviewPage() {
       </div>
 
       <div className="grid-2">
-        <Panel
-          title="Quick start"
-          actions={
-            <Link className="btn ghost" href="/billing/plans">
-              Pricing
-            </Link>
-          }
-        >
-          <ol style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)', display: 'grid', gap: 10 }}>
-            <li>
-              Create a <Link href="/new-project"><strong>project</strong></Link> (100 free credits on new wallets).
-            </li>
-            <li>
-              Create an <Link href="/usage/api-keys"><strong>API key</strong></Link> and store the secret once.
-            </li>
-            <li>
-              Call <code className="mono">https://api.talocode.site</code> with{' '}
-              <code className="mono">Authorization: Bearer …</code>
-            </li>
-            <li>
-              Top up from <Link href="/billing"><strong>Wallet</strong></Link> when balance is low.
-            </li>
-          </ol>
-        </Panel>
+        <FirstSuccessChecklist project={projects[0] || null} />
 
         <Panel title="Product namespaces">
           <div className="table-wrap">
